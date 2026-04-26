@@ -18,7 +18,6 @@ Configure in .claude/settings.json:
 
 import json
 import os
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo

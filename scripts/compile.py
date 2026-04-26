@@ -213,7 +213,7 @@ def main():
         print(f"\n[{i}/{len(to_compile)}] Compiling {log_path.name}...")
         cost = asyncio.run(compile_daily_log(log_path, state))
         total_cost += cost
-        print(f"  Done.")
+        print("  Done.")
 
     articles = list_wiki_articles()
     print(f"\nCompilation complete. Total cost: ${total_cost:.2f}")

@@ -149,7 +149,6 @@ async def check_contradictions() -> list[dict]:
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
-        ResultMessage,
         TextBlock,
         query,
     )

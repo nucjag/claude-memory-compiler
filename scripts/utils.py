@@ -11,7 +11,6 @@ from config import (
     DAILY_DIR,
     INDEX_FILE,
     KNOWLEDGE_DIR,
-    LOG_FILE,
     QA_DIR,
     STATE_FILE,
 )

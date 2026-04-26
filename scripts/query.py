@@ -16,7 +16,6 @@ import argparse
 import asyncio
 import re
 import sys
-from pathlib import Path
 
 from config import KNOWLEDGE_DIR, PROJECT_DIR, QA_DIR, now_iso
 from utils import (
