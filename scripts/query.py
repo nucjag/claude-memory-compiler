@@ -14,16 +14,113 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
+import sys
 from pathlib import Path
 
-from config import KNOWLEDGE_DIR, QA_DIR, now_iso
-from utils import load_state, read_all_wiki_content, save_state
+from config import KNOWLEDGE_DIR, PROJECT_DIR, QA_DIR, now_iso
+from utils import (
+    extract_wikilinks,
+    list_wiki_articles,
+    load_state,
+    read_wiki_index,
+    save_state,
+    wiki_article_exists,
+)
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = PROJECT_DIR
 
 
-async def run_query(question: str, file_back: bool = False) -> str:
-    """Query the knowledge base and optionally file the answer back."""
+def _article_context(links: list[str]) -> str:
+    parts: list[str] = []
+    for link in links:
+        path = KNOWLEDGE_DIR / f"{link}.md"
+        if not path.exists():
+            continue
+        content = path.read_text(encoding="utf-8")
+        parts.append(f"## {link}\n\n{content}")
+    return "\n\n---\n\n".join(parts)
+
+
+def _read_current_story() -> str:
+    context_path = PROJECT_DIR / ".sdd" / "context.md"
+    if not context_path.exists():
+        return "unknown"
+    text = context_path.read_text(encoding="utf-8")
+    match = re.search(r"^- current_story:\s*`?([^`\n]+)`?\s*$", text, flags=re.MULTILINE)
+    if not match:
+        return "unknown"
+    story = match.group(1).strip()
+    return story if story and story.upper() != "TBD" else "unknown"
+
+
+def _append_query_marker(selected_count: int, total_count: int) -> None:
+    log_path = PROJECT_DIR / ".sdd" / "token-usage.log"
+    story = _read_current_story()
+    marker = f"WIKI_QUERY story={story} selected={selected_count} total={total_count}\n"
+
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(marker)
+    except OSError as exc:
+        print(
+            f"[query] warning: failed to write WIKI_QUERY marker to {log_path}: {exc}",
+            file=sys.stderr,
+        )
+
+
+async def _select_relevant_links(question: str, index_content: str) -> list[str]:
+    """Pass 1: select relevant article links from the index."""
+    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
+
+    prompt = f"""You are selecting wiki articles for a question.
+
+Return only relevant wikilinks from the index, one per line, max 10 lines.
+Output format example:
+[[concepts/example]]
+[[connections/another]]
+
+If nothing is relevant, output exactly: NONE
+
+## Index
+
+{index_content}
+
+## Question
+
+{question}
+"""
+
+    response = ""
+    async for message in query(
+        prompt=prompt,
+        options=ClaudeAgentOptions(
+            cwd=str(ROOT_DIR),
+            allowed_tools=[],
+            max_turns=2,
+        ),
+    ):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    response += block.text
+
+    links = []
+    seen = set()
+    for link in extract_wikilinks(response):
+        if link in seen:
+            continue
+        if wiki_article_exists(link):
+            links.append(link)
+            seen.add(link)
+        if len(links) >= 10:
+            break
+    return links
+
+
+async def run_query(question: str, file_back: bool = False) -> tuple[str, int, int]:
+    """Two-pass query: select by index, then synthesize from selected articles."""
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
@@ -32,9 +129,14 @@ async def run_query(question: str, file_back: bool = False) -> str:
         query,
     )
 
-    wiki_content = read_all_wiki_content()
+    index_content = read_wiki_index()
+    total_articles = len(list_wiki_articles())
+    selected_links = await _select_relevant_links(question, index_content)
 
-    tools = ["Read", "Glob", "Grep"]
+    selected_content = _article_context(selected_links)
+    selected_count = len(selected_links)
+
+    tools = []
     if file_back:
         tools.extend(["Write", "Edit"])
 
@@ -58,21 +160,19 @@ After answering, do the following:
    - Filed to: [[qa/article-name]]
 """
 
-    prompt = f"""You are a knowledge base query engine. Answer the user's question by
-consulting the knowledge base below.
+    prompt = f"""You are a knowledge base query engine. Answer the user's question using
+the selected wiki articles below.
 
 ## How to Answer
 
-1. Read the INDEX section first - it lists every article with a one-line summary
-2. Identify 3-10 articles that are relevant to the question
-3. Read those articles carefully (they're included below)
-4. Synthesize a clear, thorough answer
-5. Cite your sources using [[wikilinks]] (e.g., [[concepts/supabase-auth]])
-6. If the knowledge base doesn't contain relevant information, say so honestly
+1. Use only selected articles as primary evidence
+2. Synthesize a clear answer
+3. Cite sources using [[wikilinks]]
+4. If selected articles are insufficient, explicitly say what's missing
 
-## Knowledge Base
+## Selected Articles
 
-{wiki_content}
+{selected_content if selected_content else "(No selected articles)"}
 
 ## Question
 
@@ -106,9 +206,15 @@ consulting the knowledge base below.
     state = load_state()
     state["query_count"] = state.get("query_count", 0) + 1
     state["total_cost"] = state.get("total_cost", 0.0) + cost
+    state["last_query_selection"] = {
+        "selected_articles": selected_count,
+        "total_articles": total_articles,
+        "question": question,
+    }
     save_state(state)
+    _append_query_marker(selected_count, total_articles)
 
-    return answer
+    return answer, selected_count, total_articles
 
 
 def main():
@@ -125,7 +231,11 @@ def main():
     print(f"File back: {'yes' if args.file_back else 'no'}")
     print("-" * 60)
 
-    answer = asyncio.run(run_query(args.question, file_back=args.file_back))
+    answer, selected_count, total_articles = asyncio.run(
+        run_query(args.question, file_back=args.file_back)
+    )
+    print(f"Selection pass: {selected_count}/{total_articles} article(s)")
+    print("-" * 60)
     print(answer)
 
     if args.file_back:

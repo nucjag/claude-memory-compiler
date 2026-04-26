@@ -2,6 +2,21 @@
 
 **Your AI conversations compile themselves into a searchable knowledge base.**
 
+## Repository Integration Note (sdd-factory)
+
+In this repository, this directory is the runtime/reference implementation.
+The active memory vault is project-local and lives in:
+
+- `.wiki/daily/`
+- `.wiki/knowledge/`
+
+Run commands with:
+
+```bash
+CLAUDE_WIKI_ROOT=.wiki CLAUDE_WIKI_TIMEZONE=Europe/Moscow \
+uv run --directory .claude/wiki/claude-memory-compiler python scripts/<command>.py
+```
+
 Adapted from [Karpathy's LLM Knowledge Base](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) architecture, but instead of clipping web articles, the raw data is your own conversations with Claude Code. When a session ends (or auto-compacts mid-session), Claude Code hooks capture the conversation transcript and spawn a background process that uses the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk) to extract the important stuff - decisions, lessons learned, patterns, gotchas - and appends it to a daily log. You then compile those daily logs into structured, cross-referenced knowledge articles organized by concept. Retrieval uses a simple index file instead of RAG - no vector database, no embeddings, just markdown.
 
 Anthropic has clarified that personal use of the Claude Agent SDK is covered under your existing Claude subscription (Max, Team, or Enterprise) - no separate API credits needed. Unlike OpenClaw, which requires API billing for its memory flush, this runs on your subscription.

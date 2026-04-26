@@ -24,12 +24,21 @@ from pathlib import Path
 if os.environ.get("CLAUDE_INVOKED_BY"):
     sys.exit(0)
 
-ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS_DIR = ROOT / "scripts"
-STATE_DIR = SCRIPTS_DIR
+PROJECT_DIR = Path(__file__).resolve().parents[4]
+DEFAULT_ROOT = PROJECT_DIR / ".wiki"
+root_env = os.environ.get("CLAUDE_WIKI_ROOT", "")
+if root_env:
+    root_candidate = Path(root_env).expanduser()
+    if not root_candidate.is_absolute():
+        root_candidate = PROJECT_DIR / root_candidate
+    ROOT = root_candidate.resolve()
+else:
+    ROOT = DEFAULT_ROOT.resolve()
+COMPILER_DIR = Path(__file__).resolve().parent.parent
+STATE_DIR = COMPILER_DIR / "scripts"
 
 logging.basicConfig(
-    filename=str(SCRIPTS_DIR / "flush.log"),
+    filename=str(STATE_DIR / "flush.log"),
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [pre-compact] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -139,13 +148,13 @@ def main() -> None:
     context_file.write_text(context, encoding="utf-8")
 
     # Spawn flush.py as a background process
-    flush_script = SCRIPTS_DIR / "flush.py"
+    flush_script = COMPILER_DIR / "scripts" / "flush.py"
 
     cmd = [
         "uv",
         "run",
         "--directory",
-        str(ROOT),
+        str(COMPILER_DIR),
         "python",
         str(flush_script),
         str(context_file),

@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
 
-from config import KNOWLEDGE_DIR, REPORTS_DIR, now_iso, today_iso
+from config import KNOWLEDGE_DIR, PROJECT_DIR, REPORTS_DIR, now_iso, today_iso
 from utils import (
     count_inbound_links,
     extract_wikilinks,
@@ -29,7 +28,7 @@ from utils import (
     wiki_article_exists,
 )
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = PROJECT_DIR
 
 
 def check_broken_links() -> list[dict]:

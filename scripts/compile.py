@@ -18,7 +18,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from config import AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, DAILY_DIR, KNOWLEDGE_DIR, now_iso
+from config import AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, DAILY_DIR, KNOWLEDGE_DIR, PROJECT_DIR, now_iso
 from utils import (
     file_hash,
     list_raw_files,
@@ -29,7 +29,7 @@ from utils import (
 )
 
 # ── Paths for the LLM to use ──────────────────────────────────────────
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = PROJECT_DIR
 
 
 async def compile_daily_log(log_path: Path, state: dict) -> float:

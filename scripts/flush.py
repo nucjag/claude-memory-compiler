@@ -20,12 +20,24 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
+PROJECT_DIR = Path(__file__).resolve().parents[4]
+DEFAULT_ROOT = PROJECT_DIR / ".wiki"
+root_env = os.environ.get("CLAUDE_WIKI_ROOT", "")
+if root_env:
+    root_candidate = Path(root_env).expanduser()
+    if not root_candidate.is_absolute():
+        root_candidate = PROJECT_DIR / root_candidate
+    ROOT = root_candidate.resolve()
+else:
+    ROOT = DEFAULT_ROOT.resolve()
+COMPILER_DIR = Path(__file__).resolve().parent.parent
+TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")
 DAILY_DIR = ROOT / "daily"
-SCRIPTS_DIR = ROOT / "scripts"
+SCRIPTS_DIR = COMPILER_DIR / "scripts"
 STATE_FILE = SCRIPTS_DIR / "last-flush.json"
 LOG_FILE = SCRIPTS_DIR / "flush.log"
 
@@ -55,7 +67,7 @@ def save_flush_state(state: dict) -> None:
 
 def append_to_daily_log(content: str, section: str = "Session") -> None:
     """Append content to today's daily log."""
-    today = datetime.now(timezone.utc).astimezone()
+    today = datetime.now(ZoneInfo(TIMEZONE))
     log_path = DAILY_DIR / f"{today.strftime('%Y-%m-%d')}.md"
 
     if not log_path.exists():
@@ -146,7 +158,7 @@ def maybe_trigger_compilation() -> None:
     """If it's past the compile hour and today's log hasn't been compiled, run compile.py."""
     import subprocess as _sp
 
-    now = datetime.now(timezone.utc).astimezone()
+    now = datetime.now(ZoneInfo(TIMEZONE))
     if now.hour < COMPILE_AFTER_HOUR:
         return
 
@@ -168,13 +180,13 @@ def maybe_trigger_compilation() -> None:
         except (json.JSONDecodeError, OSError):
             pass
 
-    compile_script = SCRIPTS_DIR / "compile.py"
+    compile_script = COMPILER_DIR / "scripts" / "compile.py"
     if not compile_script.exists():
         return
 
     logging.info("End-of-day compilation triggered (after %d:00)", COMPILE_AFTER_HOUR)
 
-    cmd = ["uv", "run", "--directory", str(ROOT), "python", str(compile_script)]
+    cmd = ["uv", "run", "--directory", str(COMPILER_DIR), "python", str(compile_script)]
 
     kwargs: dict = {}
     if sys.platform == "win32":
@@ -184,7 +196,7 @@ def maybe_trigger_compilation() -> None:
 
     try:
         log_handle = open(str(SCRIPTS_DIR / "compile.log"), "a")
-        _sp.Popen(cmd, stdout=log_handle, stderr=_sp.STDOUT, cwd=str(ROOT), **kwargs)
+        _sp.Popen(cmd, stdout=log_handle, stderr=_sp.STDOUT, cwd=str(PROJECT_DIR), **kwargs)
     except Exception as e:
         logging.error("Failed to spawn compile.py: %s", e)
 

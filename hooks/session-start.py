@@ -17,15 +17,27 @@ Configure in .claude/settings.json:
 """
 
 import json
+import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-# Paths relative to project root
-ROOT = Path(__file__).resolve().parent.parent
+# Paths relative to active wiki root
+PROJECT_DIR = Path(__file__).resolve().parents[4]
+DEFAULT_ROOT = PROJECT_DIR / ".wiki"
+root_env = os.environ.get("CLAUDE_WIKI_ROOT", "")
+if root_env:
+    root_candidate = Path(root_env).expanduser()
+    if not root_candidate.is_absolute():
+        root_candidate = PROJECT_DIR / root_candidate
+    ROOT = root_candidate.resolve()
+else:
+    ROOT = DEFAULT_ROOT.resolve()
 KNOWLEDGE_DIR = ROOT / "knowledge"
 DAILY_DIR = ROOT / "daily"
 INDEX_FILE = KNOWLEDGE_DIR / "index.md"
+TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")
 
 MAX_CONTEXT_CHARS = 20_000
 MAX_LOG_LINES = 30
@@ -33,7 +45,7 @@ MAX_LOG_LINES = 30
 
 def get_recent_log() -> str:
     """Read the most recent daily log (today or yesterday)."""
-    today = datetime.now(timezone.utc).astimezone()
+    today = datetime.now(ZoneInfo(TIMEZONE))
 
     for offset in range(2):
         date = today - timedelta(days=offset)
@@ -52,7 +64,7 @@ def build_context() -> str:
     parts = []
 
     # Today's date
-    today = datetime.now(timezone.utc).astimezone()
+    today = datetime.now(ZoneInfo(TIMEZONE))
     parts.append(f"## Today\n{today.strftime('%A, %B %d, %Y')}")
 
     # Knowledge base index (the core retrieval mechanism)
