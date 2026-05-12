@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from config import AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, DAILY_DIR, KNOWLEDGE_DIR, PROJECT_DIR, now_iso
+from llm_client import run_compile_with_fallback
 from utils import (
     file_hash,
     list_raw_files,
@@ -32,19 +33,17 @@ from utils import (
 ROOT_DIR = PROJECT_DIR
 
 
-async def compile_daily_log(log_path: Path, state: dict) -> float:
+async def compile_daily_log(
+    log_path: Path,
+    state: dict,
+    provider_order: str | None,
+    timeout_s: int | None,
+    openai_model: str | None,
+) -> tuple[float, bool]:
     """Compile a single daily log into knowledge articles.
 
     Returns the API cost of the compilation.
     """
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ClaudeAgentOptions,
-        ResultMessage,
-        TextBlock,
-        query,
-    )
-
     log_content = log_path.read_text(encoding="utf-8")
     schema = AGENTS_FILE.read_text(encoding="utf-8")
     wiki_index = read_wiki_index()
@@ -126,41 +125,33 @@ Read the daily log above and compile it into wiki articles following the schema 
 - Sources section should cite the daily log with specific claims extracted
 """
 
-    cost = 0.0
-
-    try:
-        async for message in query(
-            prompt=prompt,
-            options=ClaudeAgentOptions(
-                cwd=str(ROOT_DIR),
-                system_prompt={"type": "preset", "preset": "claude_code"},
-                allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
-                permission_mode="acceptEdits",
-                max_turns=30,
-            ),
-        ):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        pass  # compilation output - LLM writes files directly
-            elif isinstance(message, ResultMessage):
-                cost = message.total_cost_usd or 0.0
-                print(f"  Cost: ${cost:.4f}")
-    except Exception as e:
-        print(f"  Error: {e}")
-        return 0.0
+    result = await run_compile_with_fallback(
+        prompt=prompt,
+        cwd=ROOT_DIR,
+        root_dir=ROOT_DIR,
+        provider_order=provider_order,
+        timeout_s=timeout_s,
+        openai_model=openai_model,
+    )
+    if not result.ok:
+        print(f"  Error ({result.error_type}): {result.error}")
+        return 0.0, False
+    print(f"  Provider: {result.provider}")
+    if result.cost_usd > 0:
+        print(f"  Cost: ${result.cost_usd:.4f}")
 
     # Update state
     rel_path = log_path.name
     state.setdefault("ingested", {})[rel_path] = {
         "hash": file_hash(log_path),
         "compiled_at": now_iso(),
-        "cost_usd": cost,
+        "cost_usd": result.cost_usd,
+        "provider": result.provider,
     }
-    state["total_cost"] = state.get("total_cost", 0.0) + cost
+    state["total_cost"] = state.get("total_cost", 0.0) + result.cost_usd
     save_state(state)
 
-    return cost
+    return result.cost_usd, True
 
 
 def main():
@@ -168,6 +159,9 @@ def main():
     parser.add_argument("--all", action="store_true", help="Force recompile all logs")
     parser.add_argument("--file", type=str, help="Compile a specific daily log file")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be compiled")
+    parser.add_argument("--provider-order", type=str, help="LLM providers order, e.g. claude,openai,local")
+    parser.add_argument("--openai-model", type=str, help="OpenAI model for fallback, default gpt-5.4")
+    parser.add_argument("--timeout", type=int, help="Per-provider timeout in seconds")
     args = parser.parse_args()
 
     state = load_state()
@@ -209,15 +203,31 @@ def main():
 
     # Compile each file sequentially
     total_cost = 0.0
+    failed_files: list[str] = []
     for i, log_path in enumerate(to_compile, 1):
         print(f"\n[{i}/{len(to_compile)}] Compiling {log_path.name}...")
-        cost = asyncio.run(compile_daily_log(log_path, state))
+        cost, ok = asyncio.run(
+            compile_daily_log(
+                log_path,
+                state,
+                provider_order=args.provider_order,
+                timeout_s=args.timeout,
+                openai_model=args.openai_model,
+            )
+        )
         total_cost += cost
-        print("  Done.")
+        if not ok:
+            failed_files.append(log_path.name)
+            print("  Failed.")
+        else:
+            print("  Done.")
 
     articles = list_wiki_articles()
     print(f"\nCompilation complete. Total cost: ${total_cost:.2f}")
     print(f"Knowledge base: {len(articles)} articles")
+    if failed_files:
+        print(f"Failed files: {', '.join(failed_files)}")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

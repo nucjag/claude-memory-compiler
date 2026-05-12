@@ -15,6 +15,7 @@ import argparse
 import asyncio
 
 from config import KNOWLEDGE_DIR, PROJECT_DIR, REPORTS_DIR, now_iso, today_iso
+from llm_client import run_text_with_fallback
 from utils import (
     count_inbound_links,
     extract_wikilinks,
@@ -144,15 +145,12 @@ def check_sparse_articles() -> list[dict]:
     return issues
 
 
-async def check_contradictions() -> list[dict]:
+async def check_contradictions(
+    provider_order: str | None,
+    timeout_s: int | None,
+    openai_model: str | None,
+) -> tuple[list[dict], bool, str]:
     """Use LLM to detect contradictions across articles."""
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ClaudeAgentOptions,
-        TextBlock,
-        query,
-    )
-
     wiki_content = read_all_wiki_content()
 
     prompt = f"""Review this knowledge base for contradictions, inconsistencies, or
@@ -177,22 +175,17 @@ If no issues found, output exactly: NO_ISSUES
 
 Do NOT output anything else - no preamble, no explanation, just the formatted lines."""
 
-    response = ""
-    try:
-        async for message in query(
-            prompt=prompt,
-            options=ClaudeAgentOptions(
-                cwd=str(ROOT_DIR),
-                allowed_tools=[],
-                max_turns=2,
-            ),
-        ):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        response += block.text
-    except Exception as e:
-        return [{"severity": "error", "check": "contradiction", "file": "(system)", "detail": f"LLM check failed: {e}"}]
+    result = await run_text_with_fallback(
+        prompt=prompt,
+        cwd=ROOT_DIR,
+        provider_order=provider_order,
+        timeout_s=timeout_s,
+        openai_model=openai_model,
+        max_turns=2,
+    )
+    if not result.ok:
+        return [], True, f"{result.error_type}: {result.error}"
+    response = result.text
 
     issues = []
     if "NO_ISSUES" not in response:
@@ -206,7 +199,7 @@ Do NOT output anything else - no preamble, no explanation, just the formatted li
                     "detail": line,
                 })
 
-    return issues
+    return issues, False, ""
 
 
 def generate_report(all_issues: list[dict]) -> str:
@@ -252,6 +245,14 @@ def main():
         action="store_true",
         help="Skip LLM-based checks (contradictions) - faster and free",
     )
+    parser.add_argument(
+        "--lint-structural",
+        action="store_true",
+        help="Alias for --structural-only",
+    )
+    parser.add_argument("--provider-order", type=str, help="LLM providers order, e.g. claude,openai,local")
+    parser.add_argument("--openai-model", type=str, help="OpenAI model for fallback, default gpt-5.4")
+    parser.add_argument("--timeout", type=int, help="Per-provider timeout in seconds")
     args = parser.parse_args()
 
     print("Running knowledge base lint checks...")
@@ -274,11 +275,23 @@ def main():
         print(f"    Found {len(issues)} issue(s)")
 
     # LLM check (costs money)
-    if not args.structural_only:
+    structural_mode = args.structural_only or args.lint_structural
+    degraded_mode = False
+    degraded_reason = ""
+    if not structural_mode:
         print("  Checking: Contradictions (LLM)...")
-        issues = asyncio.run(check_contradictions())
+        issues, degraded_mode, degraded_reason = asyncio.run(
+            check_contradictions(
+                provider_order=args.provider_order,
+                timeout_s=args.timeout,
+                openai_model=args.openai_model,
+            )
+        )
         all_issues.extend(issues)
-        print(f"    Found {len(issues)} issue(s)")
+        if degraded_mode:
+            print(f"    Degraded to structural-only: {degraded_reason}")
+        else:
+            print(f"    Found {len(issues)} issue(s)")
     else:
         print("  Skipping: Contradictions (--structural-only)")
 
@@ -299,6 +312,8 @@ def main():
     warnings = sum(1 for i in all_issues if i["severity"] == "warning")
     suggestions = sum(1 for i in all_issues if i["severity"] == "suggestion")
     print(f"\nResults: {errors} errors, {warnings} warnings, {suggestions} suggestions")
+    if degraded_mode:
+        print("Mode: degraded (LLM checks unavailable, structural checks completed)")
 
     if errors > 0:
         print("\nErrors found - knowledge base needs attention!")

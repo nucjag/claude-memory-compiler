@@ -56,6 +56,43 @@ uv run python scripts/query.py "question"            # ask the knowledge base
 uv run python scripts/query.py "question" --file-back # ask + save answer back
 uv run python scripts/lint.py                        # run health checks
 uv run python scripts/lint.py --structural-only      # free structural checks only
+uv run python scripts/lint.py --lint-structural      # alias of --structural-only
+uv run python scripts/compile.py --timeout 120       # fail fast per provider
+```
+
+## Provider Fallback (Independent Modes)
+
+`compile.py` and LLM-based parts of `lint.py` now support provider fallback to avoid hanging
+when Claude quota/tokens are unavailable.
+
+Default chain:
+
+```text
+claude,local
+```
+
+- `claude`: default primary provider
+- `openai`: optional alternative primary provider (default model `gpt-5.4`)
+- `local`: no remote call; `lint` degrades to structural checks, `compile` fails fast with clear error
+
+Important: remote providers are independent. The runtime uses only one remote provider per run:
+- `claude,local` or
+- `openai,local`
+
+ENV defaults:
+
+```bash
+export LLM_PROVIDER_ORDER=claude,local
+export LLM_OPENAI_MODEL=gpt-5.4
+export LLM_TIMEOUT_SECONDS=120
+```
+
+CLI overrides:
+
+```bash
+uv run python scripts/compile.py --provider-order claude,local --timeout 120
+uv run python scripts/lint.py --provider-order claude,local --timeout 120
+uv run python scripts/compile.py --provider-order openai,local --openai-model gpt-5.4 --timeout 120
 ```
 
 ## Why No RAG?
