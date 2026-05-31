@@ -19,6 +19,7 @@ import sys
 
 from config import KNOWLEDGE_DIR, PROJECT_DIR, QA_DIR, now_iso
 from utils import (
+    enforce_backlinks,
     extract_wikilinks,
     list_wiki_articles,
     load_state,
@@ -157,6 +158,7 @@ After answering, do the following:
    - Question: {question}
    - Consulted: [[list of articles read]]
    - Filed to: [[qa/article-name]]
+5. For new links in the Q&A article, prefer reciprocal links in Related Concepts where relevant
 """
 
     prompt = f"""You are a knowledge base query engine. Answer the user's question using
@@ -238,6 +240,8 @@ def main():
     print(answer)
 
     if args.file_back:
+        updated_files = enforce_backlinks()
+        print(f"Backlink enforcement: updated {updated_files} article(s)")
         print("\n" + "-" * 60)
         qa_count = len(list(QA_DIR.glob("*.md"))) if QA_DIR.exists() else 0
         print(f"Answer filed to knowledge/qa/ ({qa_count} Q&A articles total)")

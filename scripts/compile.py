@@ -21,6 +21,7 @@ from pathlib import Path
 from config import AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, DAILY_DIR, KNOWLEDGE_DIR, PROJECT_DIR, now_iso
 from llm_client import run_compile_with_fallback
 from utils import (
+    enforce_backlinks,
     file_hash,
     list_raw_files,
     list_wiki_articles,
@@ -104,6 +105,8 @@ Read the daily log above and compile it into wiki articles following the schema 
    - Each entry: `| [[path/slug]] | One-line summary | source-file | {timestamp[:10]} |`
 6. **Append to knowledge/log.md** - Add a timestamped entry:
    ```
+7. **Maintain bidirectional links when practical** - when adding `[[target]]` links, prefer also
+   adding reciprocal links in the target article's Related Concepts section
    ## [{timestamp}] compile | {log_path.name}
    - Source: daily/{log_path.name}
    - Articles created: [[concepts/x]], [[concepts/y]]
@@ -119,6 +122,7 @@ Read the daily log above and compile it into wiki articles following the schema 
 ### Quality standards:
 - Every article must have complete YAML frontmatter
 - Every article must link to at least 2 other articles via [[wikilinks]]
+- Prefer reciprocal related-concept links for new cross-article references
 - Key Points section should have 3-5 bullet points
 - Details section should have 2+ paragraphs
 - Related Concepts section should have 2+ entries
@@ -204,6 +208,7 @@ def main():
     # Compile each file sequentially
     total_cost = 0.0
     failed_files: list[str] = []
+    succeeded = 0
     for i, log_path in enumerate(to_compile, 1):
         print(f"\n[{i}/{len(to_compile)}] Compiling {log_path.name}...")
         cost, ok = asyncio.run(
@@ -220,7 +225,12 @@ def main():
             failed_files.append(log_path.name)
             print("  Failed.")
         else:
+            succeeded += 1
             print("  Done.")
+
+    if succeeded > 0:
+        updated_files = enforce_backlinks()
+        print(f"\nBacklink enforcement complete. Updated {updated_files} article(s).")
 
     articles = list_wiki_articles()
     print(f"\nCompilation complete. Total cost: ${total_cost:.2f}")
