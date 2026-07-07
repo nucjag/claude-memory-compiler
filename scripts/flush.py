@@ -23,9 +23,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-DAILY_DIR = ROOT / "daily"
-SCRIPTS_DIR = ROOT / "scripts"
+from config import DAILY_DIR, ROOT_DIR as ROOT, SCRIPTS_DIR
+
 STATE_FILE = SCRIPTS_DIR / "last-flush.json"
 LOG_FILE = SCRIPTS_DIR / "flush.log"
 
