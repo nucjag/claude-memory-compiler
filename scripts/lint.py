@@ -18,9 +18,11 @@ from pathlib import Path
 from config import KNOWLEDGE_DIR, REPORTS_DIR, now_iso, today_iso
 from utils import (
     count_inbound_links,
+    enforce_backlinks,
     extract_wikilinks,
     file_hash,
     get_article_word_count,
+    list_all_knowledge_articles,
     list_raw_files,
     list_wiki_articles,
     load_state,
@@ -107,7 +109,7 @@ def check_stale_articles() -> list[dict]:
 def check_missing_backlinks() -> list[dict]:
     """Check for asymmetric links: A links to B but B doesn't link to A."""
     issues = []
-    for article in list_wiki_articles():
+    for article in list_all_knowledge_articles():
         content = article.read_text(encoding="utf-8")
         rel = article.relative_to(KNOWLEDGE_DIR)
         source_link = str(rel).replace(".md", "").replace("\\", "/")
@@ -254,9 +256,17 @@ def main():
         action="store_true",
         help="Skip LLM-based checks (contradictions) - faster and free",
     )
+    parser.add_argument(
+        "--fix-backlinks",
+        action="store_true",
+        help="Auto-fix missing backlinks before running checks",
+    )
     args = parser.parse_args()
 
     print("Running knowledge base lint checks...")
+    if args.fix_backlinks:
+        fixed = enforce_backlinks()
+        print(f"  Backlink auto-fix: updated {fixed} article(s)")
     all_issues: list[dict] = []
 
     # Structural checks (free, instant)

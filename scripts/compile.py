@@ -20,6 +20,7 @@ from pathlib import Path
 
 from config import AGENTS_FILE, CONCEPTS_DIR, CONNECTIONS_DIR, DAILY_DIR, KNOWLEDGE_DIR, now_iso
 from utils import (
+    enforce_backlinks,
     file_hash,
     list_raw_files,
     list_wiki_articles,
@@ -110,6 +111,8 @@ Read the daily log above and compile it into wiki articles following the schema 
    - Articles created: [[concepts/x]], [[concepts/y]]
    - Articles updated: [[concepts/z]] (if any)
    ```
+7. **Maintain bidirectional links when practical** - when adding `[[target]]` links, prefer also
+   adding reciprocal links in the target article's Related Concepts section
 
 ### File paths:
 - Write concept articles to: {CONCEPTS_DIR}
@@ -118,6 +121,7 @@ Read the daily log above and compile it into wiki articles following the schema 
 - Append log at: {KNOWLEDGE_DIR / 'log.md'}
 
 ### Quality standards:
+- Prefer reciprocal related-concept links for new cross-article references
 - Every article must have complete YAML frontmatter
 - Every article must link to at least 2 other articles via [[wikilinks]]
 - Key Points section should have 3-5 bullet points
@@ -209,11 +213,17 @@ def main():
 
     # Compile each file sequentially
     total_cost = 0.0
+    succeeded = 0
     for i, log_path in enumerate(to_compile, 1):
         print(f"\n[{i}/{len(to_compile)}] Compiling {log_path.name}...")
         cost = asyncio.run(compile_daily_log(log_path, state))
         total_cost += cost
+        succeeded += 1
         print(f"  Done.")
+
+    if succeeded > 0:
+        updated_files = enforce_backlinks()
+        print(f"\nBacklink enforcement complete. Updated {updated_files} article(s).")
 
     articles = list_wiki_articles()
     print(f"\nCompilation complete. Total cost: ${total_cost:.2f}")

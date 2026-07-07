@@ -17,7 +17,7 @@ import asyncio
 from pathlib import Path
 
 from config import KNOWLEDGE_DIR, QA_DIR, now_iso
-from utils import load_state, read_all_wiki_content, save_state
+from utils import enforce_backlinks, load_state, read_all_wiki_content, save_state
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -56,6 +56,7 @@ After answering, do the following:
    - Question: {question}
    - Consulted: [[list of articles read]]
    - Filed to: [[qa/article-name]]
+5. For new links in the Q&A article, prefer reciprocal links in Related Concepts where relevant
 """
 
     prompt = f"""You are a knowledge base query engine. Answer the user's question by
@@ -129,6 +130,8 @@ def main():
     print(answer)
 
     if args.file_back:
+        updated_files = enforce_backlinks()
+        print(f"Backlink enforcement: updated {updated_files} article(s)")
         print("\n" + "-" * 60)
         qa_count = len(list(QA_DIR.glob("*.md"))) if QA_DIR.exists() else 0
         print(f"Answer filed to knowledge/qa/ ({qa_count} Q&A articles total)")
