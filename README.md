@@ -2,6 +2,11 @@
 
 **Your AI conversations compile themselves into a searchable knowledge base.**
 
+> **Fork note:** this repository ([nucjag/claude-memory-compiler](https://github.com/nucjag/claude-memory-compiler)) is forked from upstream [coleam00/claude-memory-compiler](https://github.com/coleam00/claude-memory-compiler) and has **two branches**:
+>
+> - **`main`** — adapted for the sdd-factory workflow: reads/writes `.sdd/context.md` and `.sdd/token-usage.log`, adds an OpenAI fallback provider (`llm_client.py`, `--provider-order`, `--openai-model`). Use this if your project already uses the sdd-factory spec-driven contour.
+> - **`wiki-root-patch`** — generic, **no sdd-factory coupling, no OpenAI fallback**. Same `CLAUDE_WIKI_ROOT`/`CLAUDE_WIKI_TIMEZONE` env-based path handling as `main`, plus automatic backlink enforcement (`enforce_backlinks()`, `lint.py --fix-backlinks`), but nothing that assumes an `.sdd/` directory or a non-Claude LLM provider exists. Use this branch as a submodule in any plain project that just wants a portable wiki tool.
+
 Adapted from [Karpathy's LLM Knowledge Base](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) architecture, but instead of clipping web articles, the raw data is your own conversations with Claude Code. When a session ends (or auto-compacts mid-session), Claude Code hooks capture the conversation transcript and spawn a background process that uses the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk) to extract the important stuff - decisions, lessons learned, patterns, gotchas - and appends it to a daily log. You then compile those daily logs into structured, cross-referenced knowledge articles organized by concept. Retrieval uses a simple index file instead of RAG - no vector database, no embeddings, just markdown.
 
 Anthropic has clarified that personal use of the Claude Agent SDK is covered under your existing Claude subscription (Max, Team, or Enterprise) - no separate API credits needed. Unlike OpenClaw, which requires API billing for its memory flush, this runs on your subscription.
