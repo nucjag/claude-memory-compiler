@@ -2,6 +2,11 @@
 
 **Your AI conversations compile themselves into a searchable knowledge base.**
 
+> **Fork note:** this repository ([nucjag/claude-memory-compiler](https://github.com/nucjag/claude-memory-compiler)) is forked from upstream [coleam00/claude-memory-compiler](https://github.com/coleam00/claude-memory-compiler) and has **two branches**:
+>
+> - **`main`** (this branch) — adapted for the sdd-factory workflow: reads/writes `.sdd/context.md` and `.sdd/token-usage.log`, adds an OpenAI fallback provider (`llm_client.py`, `--provider-order`, `--openai-model`), two-pass index-guided `query.py`. Use this if your project already uses the sdd-factory spec-driven contour.
+> - **[`wiki-root-patch`](https://github.com/nucjag/claude-memory-compiler/tree/wiki-root-patch)** — generic, **no sdd-factory coupling, no OpenAI fallback**. Same `CLAUDE_WIKI_ROOT`/`CLAUDE_WIKI_TIMEZONE` env-based path handling as `main`, plus automatic backlink enforcement (`enforce_backlinks()`, `lint.py --fix-backlinks`), but nothing that assumes an `.sdd/` directory or a non-Claude LLM provider exists. Use this branch as a submodule in any plain project that just wants a portable wiki tool.
+
 ## Repository Integration Note (sdd-factory)
 
 In this repository, this directory is the runtime/reference implementation.
