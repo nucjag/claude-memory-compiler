@@ -36,6 +36,7 @@ else:
     ROOT = DEFAULT_ROOT.resolve()
 COMPILER_DIR = Path(__file__).resolve().parent.parent
 TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 DAILY_DIR = ROOT / "daily"
 SCRIPTS_DIR = COMPILER_DIR / "scripts"
 STATE_FILE = SCRIPTS_DIR / "last-flush.json"
@@ -133,6 +134,7 @@ respond with exactly: FLUSH_OK
             prompt=prompt,
             options=ClaudeAgentOptions(
                 cwd=str(ROOT),
+                model=CLAUDE_MODEL,
                 allowed_tools=[],
                 max_turns=2,
             ),

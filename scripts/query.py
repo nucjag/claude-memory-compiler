@@ -17,7 +17,7 @@ import asyncio
 import re
 import sys
 
-from config import KNOWLEDGE_DIR, PROJECT_DIR, QA_DIR, now_iso
+from config import CLAUDE_MODEL, KNOWLEDGE_DIR, PROJECT_DIR, QA_DIR, now_iso
 from utils import (
     enforce_backlinks,
     extract_wikilinks,
@@ -97,6 +97,7 @@ If nothing is relevant, output exactly: NONE
         prompt=prompt,
         options=ClaudeAgentOptions(
             cwd=str(ROOT_DIR),
+            model=CLAUDE_MODEL,
             allowed_tools=[],
             max_turns=2,
         ),
@@ -188,6 +189,7 @@ the selected wiki articles below.
             prompt=prompt,
             options=ClaudeAgentOptions(
                 cwd=str(ROOT_DIR),
+                model=CLAUDE_MODEL,
                 system_prompt={"type": "preset", "preset": "claude_code"},
                 allowed_tools=tools,
                 permission_mode="acceptEdits",

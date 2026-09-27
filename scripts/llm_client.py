@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from config import CLAUDE_MODEL
+
 
 @dataclass
 class LLMResult:
@@ -68,6 +70,7 @@ async def _run_claude_text(prompt: str, cwd: Path, max_turns: int) -> LLMResult:
         prompt=prompt,
         options=ClaudeAgentOptions(
             cwd=str(cwd),
+            model=CLAUDE_MODEL,
             allowed_tools=[],
             max_turns=max_turns,
         ),
@@ -182,6 +185,7 @@ async def run_compile_with_fallback(
                     prompt=prompt,
                     options=ClaudeAgentOptions(
                         cwd=str(cwd),
+                        model=CLAUDE_MODEL,
                         system_prompt={"type": "preset", "preset": "claude_code"},
                         allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
                         permission_mode="acceptEdits",

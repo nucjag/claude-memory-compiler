@@ -34,6 +34,9 @@ STATE_FILE = SCRIPTS_DIR / "state.json"
 # ── Timezone ───────────────────────────────────────────────────────────
 TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")
 
+# ── LLM Configuration ──────────────────────────────────────────────────
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+
 
 def now_iso() -> str:
     """Current time in ISO 8601 format."""
