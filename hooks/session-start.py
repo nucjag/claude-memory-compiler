@@ -18,9 +18,14 @@ Configure in .claude/settings.json:
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+# Recursion guard: skip context injection for memory-compiler child sessions
+if os.environ.get("CLAUDE_INVOKED_BY"):
+    sys.exit(0)
 
 # Paths relative to active wiki root
 PROJECT_DIR = Path(__file__).resolve().parents[4]

@@ -9,6 +9,29 @@ from typing import Any
 
 from config import CLAUDE_MODEL
 
+def isolated_session_options(stderr_lines: list[str]) -> dict[str, Any]:
+    """Options that keep a service session from loading hooks/MCP or leaving a transcript.
+
+    Child sessions must not load hooks or MCP servers, otherwise their SessionEnd
+    re-triggers compile.py. SDK 0.1.56 drops `setting_sources=[]` (falsy), so the CLI
+    flags go through extra_args. `stderr` is needed because the SDK otherwise reports
+    only "Check stderr output for details".
+    """
+    return {
+        "env": {"CLAUDE_INVOKED_BY": "memory_compiler"},
+        "extra_args": {
+            "strict-mcp-config": None,
+            "setting-sources": "",
+            "no-session-persistence": None,
+        },
+        "stderr": stderr_lines.append,
+    }
+
+
+def _with_stderr(exc: Exception, stderr_lines: list[str]) -> str:
+    tail = " ".join(line.strip() for line in stderr_lines[-5:])[:500]
+    return f"{exc} | stderr: {tail}" if tail else str(exc)
+
 
 @dataclass
 class LLMResult:
@@ -18,6 +41,8 @@ class LLMResult:
     cost_usd: float = 0.0
     error_type: str = ""
     error: str = ""
+    subtype: str = ""
+    num_turns: int = 0
 
 
 def _provider_order(cli_value: str | None) -> list[str]:
@@ -66,19 +91,24 @@ async def _run_claude_text(prompt: str, cwd: Path, max_turns: int) -> LLMResult:
     from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
 
     response = ""
-    async for message in query(
-        prompt=prompt,
-        options=ClaudeAgentOptions(
-            cwd=str(cwd),
-            model=CLAUDE_MODEL,
-            allowed_tools=[],
-            max_turns=max_turns,
-        ),
-    ):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    response += block.text
+    stderr_lines: list[str] = []
+    try:
+        async for message in query(
+            prompt=prompt,
+            options=ClaudeAgentOptions(
+                cwd=str(cwd),
+                model=CLAUDE_MODEL,
+                allowed_tools=[],
+                max_turns=max_turns,
+                **isolated_session_options(stderr_lines),
+            ),
+        ):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        response += block.text
+    except Exception as exc:
+        raise RuntimeError(_with_stderr(exc, stderr_lines)) from exc
     return LLMResult(ok=True, provider="claude", text=response)
 
 
@@ -181,20 +211,41 @@ async def run_compile_with_fallback(
                 )
 
                 cost = 0.0
-                async for message in query(
-                    prompt=prompt,
-                    options=ClaudeAgentOptions(
-                        cwd=str(cwd),
-                        model=CLAUDE_MODEL,
-                        system_prompt={"type": "preset", "preset": "claude_code"},
-                        allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
-                        permission_mode="acceptEdits",
-                        max_turns=30,
-                    ),
-                ):
-                    if isinstance(message, ResultMessage):
-                        cost = message.total_cost_usd or 0.0
-                return LLMResult(ok=True, provider="claude", cost_usd=cost)
+                subtype = ""
+                is_error = False
+                num_turns = 0
+                stderr_lines: list[str] = []
+                try:
+                    async for message in query(
+                        prompt=prompt,
+                        options=ClaudeAgentOptions(
+                            cwd=str(cwd),
+                            model=CLAUDE_MODEL,
+                            system_prompt={"type": "preset", "preset": "claude_code"},
+                            allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
+                            permission_mode="acceptEdits",
+                            max_turns=30,
+                            **isolated_session_options(stderr_lines),
+                        ),
+                    ):
+                        if isinstance(message, ResultMessage):
+                            cost = message.total_cost_usd or 0.0
+                            subtype = message.subtype
+                            is_error = bool(message.is_error)
+                            num_turns = message.num_turns
+                except Exception as exc:
+                    raise RuntimeError(_with_stderr(exc, stderr_lines)) from exc
+                if is_error:
+                    return LLMResult(
+                        ok=False,
+                        provider="claude",
+                        cost_usd=cost,
+                        error_type="LLM_SESSION_ERROR",
+                        error=f"session ended with {subtype}",
+                        subtype=subtype,
+                        num_turns=num_turns,
+                    )
+                return LLMResult(ok=True, provider="claude", cost_usd=cost, subtype=subtype, num_turns=num_turns)
 
             if provider == "openai":
                 compile_protocol = f"""{prompt}

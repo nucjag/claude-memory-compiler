@@ -13,6 +13,10 @@ Usage:
 
 from __future__ import annotations
 
+# Recursion prevention: set before any Claude session can start
+import os
+os.environ.setdefault("CLAUDE_INVOKED_BY", "memory_compiler")
+
 import argparse
 import asyncio
 import sys
@@ -26,8 +30,15 @@ from utils import (
     list_raw_files,
     list_wiki_articles,
     load_state,
+    build_grounding_corpus,
+    changed_articles,
+    find_ungrounded_identifiers,
+    read_log_text,
     read_wiki_index,
     save_state,
+    select_related_articles,
+    snapshot_knowledge,
+    verify_compile,
 )
 
 # ── Paths for the LLM to use ──────────────────────────────────────────
@@ -49,18 +60,14 @@ async def compile_daily_log(
     schema = AGENTS_FILE.read_text(encoding="utf-8")
     wiki_index = read_wiki_index()
 
-    # Read existing articles for context
-    existing_articles_context = ""
-    existing = {}
-    for article_path in list_wiki_articles():
-        rel = article_path.relative_to(KNOWLEDGE_DIR)
-        existing[str(rel)] = article_path.read_text(encoding="utf-8")
-
-    if existing:
-        parts = []
-        for rel_path, content in existing.items():
-            parts.append(f"### {rel_path}\n```markdown\n{content}\n```")
-        existing_articles_context = "\n\n".join(parts)
+    # Send the index, all article paths and only the most related articles in full.
+    # Sending every article overflows the model context as the wiki grows.
+    related = select_related_articles(log_content)
+    related_context = "\n\n".join(
+        f"### {p.relative_to(KNOWLEDGE_DIR).as_posix()}\n```markdown\n{p.read_text(encoding='utf-8')}\n```"
+        for p in related
+    )
+    all_paths = "\n".join(f"- {p}" for p in list_wiki_articles())
 
     timestamp = now_iso()
 
@@ -75,9 +82,16 @@ and extract knowledge into structured wiki articles.
 
 {wiki_index}
 
-## Existing Wiki Articles
+## Most Related Existing Articles (full text)
 
-{existing_articles_context if existing_articles_context else "(No existing articles yet)"}
+{related_context if related_context else "(none selected)"}
+
+## All Existing Article Paths
+
+Full text of the other articles is NOT included. Open any of them with the Read tool before
+updating or linking it.
+
+{all_paths if all_paths else "(No existing articles yet)"}
 
 ## Daily Log to Compile
 
@@ -91,27 +105,33 @@ Read the daily log above and compile it into wiki articles following the schema 
 
 ### Rules:
 
-1. **Extract key concepts** - Identify 3-7 distinct concepts worth their own article
+1. **Extract key concepts** - Identify as many distinct concepts as the log actually supports
+   (often 1-4); do not split or pad topics to reach a number
 2. **Create concept articles** in `knowledge/concepts/` - One .md file per concept
    - Use the exact article format from AGENTS.md (YAML frontmatter + sections)
    - Include `sources:` in frontmatter pointing to the daily log file
    - Use `[[concepts/slug]]` wikilinks to link to related concepts
-   - Write in encyclopedia style - neutral, comprehensive
+   - Write in encyclopedia style - neutral and factual
 3. **Create connection articles** in `knowledge/connections/` if this log reveals non-obvious
    relationships between 2+ existing concepts
 4. **Update existing articles** if this log adds new information to concepts already in the wiki
    - Read the existing article, add the new information, add the source to frontmatter
+   - Before finishing, run Grep over {KNOWLEDGE_DIR} for the key terms of this log (file names,
+     identifiers, error codes, component names) and open every article that matches; update it if
+     the log adds to it. Do not rely only on the articles included above
 5. **Update knowledge/index.md** - Add new entries to the table
    - Each entry: `| [[path/slug]] | One-line summary | source-file | {timestamp[:10]} |`
-6. **Append to knowledge/log.md** - Add a timestamped entry:
+6. **Append to knowledge/log.md** - ALWAYS add a timestamped entry, even when the log was already
+   compiled and nothing needed changing (then write "no new knowledge" in the entry). The entry
+   header must contain `compile | daily/{log_path.name}`. Never finish without it:
    ```
-7. **Maintain bidirectional links when practical** - when adding `[[target]]` links, prefer also
-   adding reciprocal links in the target article's Related Concepts section
    ## [{timestamp}] compile | {log_path.name}
    - Source: daily/{log_path.name}
    - Articles created: [[concepts/x]], [[concepts/y]]
    - Articles updated: [[concepts/z]] (if any)
    ```
+7. **Maintain bidirectional links when practical** - when adding `[[target]]` links, prefer also
+   adding reciprocal links in the target article's Related Concepts section
 
 ### File paths:
 - Write concept articles to: {CONCEPTS_DIR}
@@ -119,16 +139,27 @@ Read the daily log above and compile it into wiki articles following the schema 
 - Update index at: {KNOWLEDGE_DIR / 'index.md'}
 - Append log at: {KNOWLEDGE_DIR / 'log.md'}
 
+### Grounding rules (highest priority):
+- State only what the daily log supports. Never invent names, environment variables, commands,
+  flags, file paths, versions, numbers, dates, timelines or metrics to fill a section.
+- If a detail is checkable (env var, command, path, flag) and the project has code, config or
+  docs, verify it with Grep/Read before writing it (a few checks at most); otherwise omit it or
+  mark it "(not verified: from the log only)".
+- For external tools, state only behavior the log or the tool's own docs support.
+- Shorter is better than padded: a section may be one bullet or one short paragraph.
+
 ### Quality standards:
 - Every article must have complete YAML frontmatter
-- Every article must link to at least 2 other articles via [[wikilinks]]
+- Link to related existing articles via [[wikilinks]] (at least 2 when related articles exist)
 - Prefer reciprocal related-concept links for new cross-article references
-- Key Points section should have 3-5 bullet points
-- Details section should have 2+ paragraphs
-- Related Concepts section should have 2+ entries
+- Key Points: up to 5 bullets, only as many as the log supports
+- Details: as many paragraphs as needed, no filler
+- Related Concepts: the related articles that actually exist
 - Sources section should cite the daily log with specific claims extracted
 """
 
+    before = snapshot_knowledge()
+    before_log = read_log_text()
     result = await run_compile_with_fallback(
         prompt=prompt,
         cwd=ROOT_DIR,
@@ -143,6 +174,16 @@ Read the daily log above and compile it into wiki articles following the schema 
     print(f"  Provider: {result.provider}")
     if result.cost_usd > 0:
         print(f"  Cost: ${result.cost_usd:.4f}")
+
+    verified, reason = verify_compile(before, before_log, log_path.name)
+    if not verified:
+        print(f"  Error (COMPILE_INCOMPLETE): {reason}; session {result.subtype or 'unknown'}, {result.num_turns} turns")
+        return result.cost_usd, False
+    print(f"  Verified: {reason}")
+
+    ungrounded = find_ungrounded_identifiers(changed_articles(before), build_grounding_corpus(log_content))
+    for article, identifier in ungrounded:
+        print(f"  UNGROUNDED: {article}: `{identifier}` is in neither the log nor the project files")
 
     # Update state
     rel_path = log_path.name

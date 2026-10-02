@@ -242,7 +242,11 @@ When processing a daily log:
 7. APPEND to `knowledge/log.md`
 
 **Important guidelines:**
-- A single daily log may touch 3-10 knowledge articles
+- A single daily log touches as many articles as it actually supports; do not pad to reach a number
+- **Grounding:** state only what the daily log supports. Never invent names, environment variables,
+  commands, flags, paths, versions, numbers, dates or metrics. If a detail is checkable and the
+  project has code, config or docs, verify it there; if there is nothing to check against, omit it
+  or mark it "(not verified: from the log only)". Short articles are fine
 - Prefer updating existing articles over creating near-duplicates
 - Use Obsidian-style `[[wikilinks]]` with full relative paths from knowledge/
 - Write in encyclopedia style - factual, concise, self-contained

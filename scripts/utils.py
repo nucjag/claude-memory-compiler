@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import math
 import re
+import subprocess
 from pathlib import Path
 
 from config import (
@@ -11,6 +13,7 @@ from config import (
     DAILY_DIR,
     INDEX_FILE,
     KNOWLEDGE_DIR,
+    PROJECT_DIR,
     QA_DIR,
     STATE_FILE,
 )
@@ -241,3 +244,171 @@ def enforce_backlinks() -> int:
             modified += 1
 
     return modified
+
+
+# ── Compile support: related-article selection and result verification ─
+
+_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]{3,}|[А-Яа-яЁё]{5,}")
+
+
+def _tokens(text: str) -> set[str]:
+    return {t.lower() for t in _TOKEN_RE.findall(text)}
+
+
+def select_related_articles(log_text: str, n: int = 8, max_chars: int = 60_000) -> list[Path]:
+    """Pick the articles that share the most distinctive words with a daily log.
+
+    Deterministic and model-free: words are weighted by inverse document frequency
+    over all articles, words present in more than 30% of articles are ignored.
+    """
+    articles = list_wiki_articles()
+    if not articles:
+        return []
+
+    texts = {a: a.read_text(encoding="utf-8") for a in articles}
+    article_tokens = {a: _tokens(t) | _tokens(a.stem.replace("-", " ")) for a, t in texts.items()}
+    doc_freq: dict[str, int] = {}
+    for toks in article_tokens.values():
+        for t in toks:
+            doc_freq[t] = doc_freq.get(t, 0) + 1
+
+    total = len(articles)
+    log_tokens = _tokens(log_text)
+    scored: list[tuple[float, Path]] = []
+    for article, toks in article_tokens.items():
+        score = 0.0
+        for t in log_tokens & toks:
+            df = doc_freq[t]
+            if df > total * 0.3:
+                continue
+            score += math.log(total / df)
+        if score > 0:
+            scored.append((score, article))
+
+    scored.sort(key=lambda x: (-x[0], str(x[1])))
+    selected: list[Path] = []
+    used = 0
+    for _, article in scored:
+        size = len(texts[article])
+        if selected and used + size > max_chars:
+            continue
+        selected.append(article)
+        used += size
+        if len(selected) >= n:
+            break
+    return selected
+
+
+def snapshot_knowledge() -> dict[str, str]:
+    """Hash of index.md, log.md and every article, keyed by path relative to knowledge/."""
+    snap: dict[str, str] = {}
+    for md_file in KNOWLEDGE_DIR.rglob("*.md") if KNOWLEDGE_DIR.exists() else []:
+        snap[md_file.relative_to(KNOWLEDGE_DIR).as_posix()] = file_hash(md_file)
+    return snap
+
+
+def read_log_text() -> str:
+    log_file = KNOWLEDGE_DIR / "log.md"
+    return log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+
+
+def verify_compile(before: dict[str, str], before_log: str, log_name: str) -> tuple[bool, str]:
+    """Check that a compile session did its job, not just that it ended without error.
+
+    Success needs a new compile header in log.md that names the daily log (the agent
+    varies the exact wording, for example "compile | daily/2026-09-28.md (...)"). Changed
+    articles are not required: a log that was already compiled legitimately changes nothing,
+    and the prompt makes the agent say so in the entry. A missing entry means a silent
+    no-op or a partial run.
+    """
+    after = snapshot_knowledge()
+    known = set(before_log.splitlines())
+    stem = log_name.removesuffix(".md")
+    headers = [
+        line for line in read_log_text().splitlines()
+        if line not in known and line.startswith("## [") and "compile" in line and stem in line
+    ]
+    if not headers:
+        return False, f"log.md has no new compile entry for {stem}"
+    changed = [k for k, v in after.items() if k != "log.md" and before.get(k) != v]
+    return True, f"log entry present, {len(changed)} article/index file(s) created or changed"
+
+
+# ── Grounding check: identifiers in articles must exist in the sources ─
+
+_BACKTICK_RE = re.compile(r"`([^`\n]{3,80})`")
+_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
+_UPPER_SNAKE_RE = re.compile(r"\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b")
+_ENV_VAR_RE = re.compile(r"^[A-Z][A-Z0-9]*_[A-Z0-9_]+$")
+_FLAG_RE = re.compile(r"^--[a-z][a-z0-9-]+$")
+_FILE_RE = re.compile(r"^[\w./-]*\w\.(?:py|ts|tsx|js|json|ya?ml|toml|md|sh|sql|env\w*|example)$")
+_CODE_SUFFIXES = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".yml", ".yaml", ".toml", ".ini", ".cfg",
+    ".sh", ".sql", ".md", ".txt", ".html", ".css", ".conf", ".example",
+}
+_CORPUS_MAX_BYTES = 15_000_000
+
+
+def _checkable_identifier(token: str) -> bool:
+    """Env vars, long flags and file names: things that either exist or do not."""
+    return bool(_ENV_VAR_RE.match(token) or _FLAG_RE.match(token) or _FILE_RE.match(token))
+
+
+def build_grounding_corpus(source_text: str) -> str:
+    """The daily log plus the project's own tracked text files (never the wiki itself).
+
+    A project without code simply yields the log alone, so the check still works there.
+    """
+    parts = [source_text]
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(PROJECT_DIR), "ls-files", "-z"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout.split("\0")
+    except (subprocess.SubprocessError, OSError):
+        return source_text
+
+    total = 0
+    for rel in listing:
+        if not rel or rel.startswith((".wiki/", ".claude/", "node_modules/", ".venv/")):
+            continue
+        path = PROJECT_DIR / rel
+        name = path.name
+        if path.suffix.lower() not in _CODE_SUFFIXES and not name.startswith((".env", "Dockerfile")):
+            continue
+        try:
+            size = path.stat().st_size
+            if size > 1_000_000 or total + size > _CORPUS_MAX_BYTES:
+                continue
+            parts.append(path.read_text(encoding="utf-8", errors="ignore"))
+            total += size
+        except OSError:
+            continue
+    return "\n".join(parts)
+
+
+def changed_articles(before: dict[str, str]) -> list[Path]:
+    """Articles created or changed since the snapshot, excluding index.md and log.md."""
+    after = snapshot_knowledge()
+    return [
+        KNOWLEDGE_DIR / rel
+        for rel, digest in sorted(after.items())
+        if rel not in ("index.md", "log.md") and before.get(rel) != digest
+    ]
+
+
+def find_ungrounded_identifiers(article_paths: list[Path], corpus: str) -> list[tuple[str, str]]:
+    """Backticked env vars, flags and file names in the articles that appear nowhere in the corpus."""
+    found: list[tuple[str, str]] = []
+    for path in article_paths:
+        text = path.read_text(encoding="utf-8")
+        seen: set[str] = set()
+        tokens = [t.strip().split("=", 1)[0] for t in _BACKTICK_RE.findall(text)]
+        tokens += _UPPER_SNAKE_RE.findall("\n".join(_FENCE_RE.findall(text)))
+        for token in tokens:
+            if token in seen or not _checkable_identifier(token):
+                continue
+            seen.add(token)
+            if token not in corpus:
+                found.append((path.relative_to(KNOWLEDGE_DIR).as_posix(), token))
+    return found

@@ -98,6 +98,8 @@ async def run_flush(context: str) -> str:
     prompt = f"""Review the conversation context below and respond with a concise summary
 of important items that should be preserved in the daily log.
 Do NOT use any tools — just return plain text.
+Record only what was actually said or done in the context. Never add names, commands,
+variables, numbers or details that are not in it.
 
 Format your response as a structured daily log entry with these sections:
 
@@ -127,7 +129,10 @@ respond with exactly: FLUSH_OK
 
 {context}"""
 
+    from llm_client import isolated_session_options
+
     response = ""
+    stderr_lines: list[str] = []
 
     try:
         async for message in query(
@@ -137,6 +142,7 @@ respond with exactly: FLUSH_OK
                 model=CLAUDE_MODEL,
                 allowed_tools=[],
                 max_turns=2,
+                **isolated_session_options(stderr_lines),
             ),
         ):
             if isinstance(message, AssistantMessage):
@@ -148,7 +154,8 @@ respond with exactly: FLUSH_OK
     except Exception as e:
         import traceback
         logging.error("Agent SDK error: %s\n%s", e, traceback.format_exc())
-        response = f"FLUSH_ERROR: {type(e).__name__}: {e}"
+        stderr_tail = " ".join(line.strip() for line in stderr_lines[-5:])[:500]
+        response = f"FLUSH_ERROR: {type(e).__name__}: {e}" + (f" | stderr: {stderr_tail}" if stderr_tail else "")
 
     return response
 

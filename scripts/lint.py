@@ -11,6 +11,10 @@ Usage:
 
 from __future__ import annotations
 
+# Recursion prevention: set before any Claude session can start
+import os
+os.environ.setdefault("CLAUDE_INVOKED_BY", "memory_compiler")
+
 import argparse
 import asyncio
 
