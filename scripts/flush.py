@@ -121,6 +121,7 @@ Skip anything that is:
 - Routine tool calls or file reads
 - Content that's trivial or obvious
 - Trivial back-and-forth or clarification exchanges
+- Claude Code system messages (about unavailable skills, commands, etc.)
 
 Only include sections that have actual content. If nothing is worth saving,
 respond with exactly: FLUSH_OK
