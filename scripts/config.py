@@ -35,7 +35,7 @@ STATE_FILE = SCRIPTS_DIR / "state.json"
 TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")
 
 # ── LLM Configuration ──────────────────────────────────────────────────
-CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-5-5")
 
 
 def now_iso() -> str:
