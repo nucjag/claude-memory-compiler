@@ -119,7 +119,10 @@ Read the daily log above and compile it into wiki articles following the schema 
    - Before finishing, run Grep over {KNOWLEDGE_DIR} for the key terms of this log (file names,
      identifiers, error codes, component names) and open every article that matches; update it if
      the log adds to it. Do not rely only on the articles included above
-5. **Update knowledge/index.md** - Add new entries to the table
+5. **Update knowledge/index.md** - ONE row per article across the whole file
+   - New article: add a row to the fitting existing section's table. Updated article: edit its
+     existing row in place (summary, sources, date) - never append a second row for it or a new
+     section repeating articles that are already listed
    - Each entry: `| [[path/slug]] | One-line summary | source-file | {timestamp[:10]} |`
 6. **Append to knowledge/log.md** - ALWAYS add a timestamped entry, even when the log was already
    compiled and nothing needed changing (then write "no new knowledge" in the entry). The entry

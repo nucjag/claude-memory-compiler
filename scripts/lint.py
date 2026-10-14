@@ -1,7 +1,7 @@
 """
 Lint the knowledge base for structural and semantic health.
 
-Runs 7 checks: broken links, orphan pages, orphan sources, stale articles,
+Runs 8 checks: broken links, index duplicates, orphan pages, orphan sources, stale articles,
 contradictions (LLM), missing backlinks, and sparse articles.
 
 Usage:
@@ -54,6 +54,28 @@ def check_broken_links() -> list[dict]:
                     "file": str(rel),
                     "detail": f"Broken link: [[{link}]] - target does not exist",
                 })
+    return issues
+
+
+def check_index_duplicates() -> list[dict]:
+    """Check knowledge/index.md lists each article once (compile must replace its row, not append)."""
+    index = KNOWLEDGE_DIR / "index.md"
+    if not index.exists():
+        return []
+    issues = []
+    seen: dict[str, int] = {}
+    for line in index.read_text(encoding="utf-8").splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if cells and cells[0].startswith("[[") and cells[0].endswith("]]"):
+            seen[cells[0]] = seen.get(cells[0], 0) + 1
+    for link, n in seen.items():
+        if n > 1:
+            issues.append({
+                "severity": "error",
+                "check": "index_duplicate",
+                "file": "index.md",
+                "detail": f"{link} listed {n} times - keep one row",
+            })
     return issues
 
 
@@ -275,6 +297,7 @@ def main():
     # Structural checks (free, instant)
     checks = [
         ("Broken links", check_broken_links),
+        ("Index duplicates", check_index_duplicates),
         ("Orphan pages", check_orphan_pages),
         ("Orphan sources", check_orphan_sources),
         ("Stale articles", check_stale_articles),
