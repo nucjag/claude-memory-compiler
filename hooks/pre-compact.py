@@ -49,6 +49,30 @@ MAX_CONTEXT_CHARS = 15_000
 MIN_TURNS_TO_FLUSH = 5
 
 
+# Codex rollout lines: {"type": "response_item", "payload": {"type": "message", "role": ...,
+# "content": [{"type": "input_text"|"output_text", "text": ...}]}}. Service user messages
+# (environment context, AGENTS.md instructions) are not part of the conversation.
+CODEX_SERVICE_PREFIXES = ("<environment_context>", "# AGENTS.md instructions", "<user_instructions>")
+
+
+def _from_codex(entry: dict) -> dict:
+    """Map a Codex rollout line to the Claude transcript shape; other lines pass through."""
+    if entry.get("type") != "response_item":
+        return entry
+    payload = entry.get("payload") or {}
+    if payload.get("type") != "message":
+        return {}
+    texts = [
+        c.get("text", "")
+        for c in payload.get("content") or []
+        if isinstance(c, dict) and c.get("type") in ("input_text", "output_text")
+    ]
+    text = "\n".join(t for t in texts if t)
+    if payload.get("role") == "user" and text.lstrip().startswith(CODEX_SERVICE_PREFIXES):
+        return {}
+    return {"message": {"role": payload.get("role", ""), "content": text}}
+
+
 def extract_conversation_context(transcript_path: Path) -> tuple[str, int]:
     """Read JSONL transcript and extract last ~N conversation turns as markdown."""
     turns: list[str] = []
@@ -63,6 +87,7 @@ def extract_conversation_context(transcript_path: Path) -> tuple[str, int]:
             except json.JSONDecodeError:
                 continue
 
+            entry = _from_codex(entry)
             msg = entry.get("message", {})
             if isinstance(msg, dict):
                 role = msg.get("role", "")
