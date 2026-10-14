@@ -116,6 +116,8 @@ Read the daily log above and compile it into wiki articles following the schema 
    relationships between 2+ existing concepts
 4. **Update existing articles** if this log adds new information to concepts already in the wiki
    - Read the existing article, add the new information, add the source to frontmatter
+   - When the log changes a fact the article already states, rewrite that statement in place -
+     never keep the old and the new version side by side
    - Before finishing, run Grep over {KNOWLEDGE_DIR} for the key terms of this log (file names,
      identifiers, error codes, component names) and open every article that matches; update it if
      the log adds to it. Do not rely only on the articles included above
