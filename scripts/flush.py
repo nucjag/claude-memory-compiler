@@ -162,12 +162,18 @@ respond with exactly: FLUSH_OK
 
 
 COMPILE_AFTER_HOUR = 18  # 6 PM local time
+# Off by default: the project decides when to compile (SDD runs compile.py once per Story in /wrap-up).
+# Flush runs on SessionEnd and on PreCompact, including Claude Code's idle auto-compaction, so an
+# automatic compile here spends tokens outside that decision. CLAUDE_WIKI_AUTO_COMPILE=1 restores it.
+AUTO_COMPILE = os.environ.get("CLAUDE_WIKI_AUTO_COMPILE", "") == "1"
 
 
 def maybe_trigger_compilation() -> None:
-    """If it's past the compile hour and today's log hasn't been compiled, run compile.py."""
+    """If enabled, past the compile hour and today's log hasn't been compiled, run compile.py."""
     import subprocess as _sp
 
+    if not AUTO_COMPILE:
+        return
     now = datetime.now(ZoneInfo(TIMEZONE))
     if now.hour < COMPILE_AFTER_HOUR:
         return

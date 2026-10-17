@@ -2,6 +2,10 @@
 
 ## 2026-10-17
 
+### Changed
+
+- **End-of-day compile is opt-in.** `flush.py` no longer spawns `compile.py` after 6 PM unless `CLAUDE_WIKI_AUTO_COMPILE=1`. Flush runs on SessionEnd and on PreCompact, and Claude Code's idle auto-compaction (on by default) fires PreCompact too, so the automatic compile spent tokens outside the project's decision (observed: $0.93 compile at 22:43 after compile was removed from SessionEnd).
+
 ### Fixed
 
 - **SessionStart context over the hook cap.** Claude Code caps a hook's `additionalContext` at 10,000 characters and otherwise passes only a 2,000-character preview plus a file path. `hooks/session-start.py` injected the full `index.md` (23,074 characters for 128 articles), so sessions saw the date and the first index rows only. The index is now rendered as headings plus `- [[article]] — summary` lines with the summary shortened until the whole context fits 9,500 characters (links only as a last resort), with a pointer to the full `index.md`; the date and the daily log are never cut (log capped at 3,000 characters).
