@@ -36,7 +36,7 @@ else:
     ROOT = DEFAULT_ROOT.resolve()
 COMPILER_DIR = Path(__file__).resolve().parent.parent
 TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")
-CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-5-5")
 DAILY_DIR = ROOT / "daily"
 SCRIPTS_DIR = COMPILER_DIR / "scripts"
 STATE_FILE = SCRIPTS_DIR / "last-flush.json"
