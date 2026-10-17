@@ -43,8 +43,29 @@ DAILY_DIR = ROOT / "daily"
 INDEX_FILE = KNOWLEDGE_DIR / "index.md"
 TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")
 
-MAX_CONTEXT_CHARS = 20_000
+# Claude Code caps additionalContext at 10,000 characters; anything longer is saved to a
+# file and Claude sees only a 2,000-character preview. Stay below the cap with headroom.
+MAX_CONTEXT_CHARS = 9_500
 MAX_LOG_LINES = 30
+MAX_LOG_CHARS = 3_000
+# Summary widths tried in order until the compact index fits; 0 keeps article links only.
+SUMMARY_WIDTHS = (None, *range(200, -1, -10))
+INDEX_HINT = "Full index with summaries and sources: `{path}`"
+
+
+def compact_index(index_content: str, width: int | None) -> str:
+    """Index as headings plus `- [[article]] — summary` lines, summary cut to width."""
+    lines = []
+    for line in index_content.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.lstrip().startswith("|") and cells and cells[0].startswith("[["):
+            summary = cells[1] if len(cells) > 1 else ""
+            if width is not None and len(summary) > width:
+                summary = summary[: max(width - 1, 0)].rstrip() + "…" if width else ""
+            lines.append(f"- {cells[0]} — {summary}" if summary else f"- {cells[0]}")
+        elif line.startswith("#") and not line.startswith("# "):
+            lines.append(f"\n{line}")
+    return "\n".join(lines).strip()
 
 
 def get_recent_log() -> str:
@@ -58,37 +79,34 @@ def get_recent_log() -> str:
             lines = log_path.read_text(encoding="utf-8").splitlines()
             # Return last N lines to keep context small
             recent = lines[-MAX_LOG_LINES:] if len(lines) > MAX_LOG_LINES else lines
-            return "\n".join(recent)
+            return "\n".join(recent)[-MAX_LOG_CHARS:]
 
     return "(no recent daily log)"
 
 
 def build_context() -> str:
     """Assemble the context to inject into the conversation."""
-    parts = []
-
-    # Today's date
     today = datetime.now(ZoneInfo(TIMEZONE))
-    parts.append(f"## Today\n{today.strftime('%A, %B %d, %Y')}")
+    head = f"## Today\n{today.strftime('%A, %B %d, %Y')}"
+    tail = f"## Recent Daily Log\n\n{get_recent_log()}"
 
-    # Knowledge base index (the core retrieval mechanism)
-    if INDEX_FILE.exists():
-        index_content = INDEX_FILE.read_text(encoding="utf-8")
-        parts.append(f"## Knowledge Base Index\n\n{index_content}")
-    else:
-        parts.append("## Knowledge Base Index\n\n(empty - no articles compiled yet)")
+    def assemble(index_body: str) -> str:
+        return "\n\n---\n\n".join([head, f"## Knowledge Base Index\n\n{index_body}", tail])
 
-    # Recent daily log
-    recent_log = get_recent_log()
-    parts.append(f"## Recent Daily Log\n\n{recent_log}")
+    # Knowledge base index (the core retrieval mechanism), shrunk until the whole context fits;
+    # the date and the daily log are never cut.
+    if not INDEX_FILE.exists():
+        return assemble("(empty - no articles compiled yet)")[:MAX_CONTEXT_CHARS]
 
-    context = "\n\n---\n\n".join(parts)
+    index_content = INDEX_FILE.read_text(encoding="utf-8")
+    hint = INDEX_HINT.format(path=INDEX_FILE.relative_to(PROJECT_DIR) if INDEX_FILE.is_relative_to(PROJECT_DIR) else INDEX_FILE)
+    for width in SUMMARY_WIDTHS:
+        context = assemble(f"{hint}\n\n{compact_index(index_content, width)}")
+        if len(context) <= MAX_CONTEXT_CHARS:
+            return context
 
-    # Truncate if too long
-    if len(context) > MAX_CONTEXT_CHARS:
-        context = context[:MAX_CONTEXT_CHARS] + "\n\n...(truncated)"
-
-    return context
+    room = MAX_CONTEXT_CHARS - len(assemble(f"{hint}\n\n...(truncated)"))
+    return assemble(f"{hint}\n\n{compact_index(index_content, 0)[: max(room, 0)]}\n...(truncated)")
 
 
 def main():

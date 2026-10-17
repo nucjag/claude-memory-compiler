@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-17
+
+### Fixed
+
+- **SessionStart context over the hook cap.** Claude Code caps a hook's `additionalContext` at 10,000 characters and otherwise passes only a 2,000-character preview plus a file path. `hooks/session-start.py` injected the full `index.md` (23,074 characters for 128 articles), so sessions saw the date and the first index rows only. The index is now rendered as headings plus `- [[article]] — summary` lines with the summary shortened until the whole context fits 9,500 characters (links only as a last resort), with a pointer to the full `index.md`; the date and the daily log are never cut (log capped at 3,000 characters).
+
 ## 2026-10-02
 
 Fixes a SessionEnd recursion loop, makes `compile.py` work on large wikis and report failures honestly, and stops compiler runs from filling the disk with transcripts. Verified against SDK `claude-agent-sdk` 0.1.56 (bundled Claude Code 2.1.92).
