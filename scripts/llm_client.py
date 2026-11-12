@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,7 +48,7 @@ class LLMResult:
 
 def _provider_order(cli_value: str | None) -> list[str]:
     raw = cli_value or os.environ.get("LLM_PROVIDER_ORDER", "claude,local")
-    allowed = {"claude", "openai", "local"}
+    allowed = {"claude", "openai", "codex", "local"}
     items = [x.strip().lower() for x in raw.split(",") if x.strip()]
     normalized = [x for x in items if x in allowed]
     if not normalized:
@@ -56,8 +57,9 @@ def _provider_order(cli_value: str | None) -> list[str]:
     # Keep modes independent:
     # - claude,local
     # - openai,local
+    # - codex,local
     # If both remotes are provided, keep only the first one.
-    primary_remote = next((x for x in normalized if x in {"claude", "openai"}), "claude")
+    primary_remote = next((x for x in normalized if x in {"claude", "openai", "codex"}), "claude")
     has_local = "local" in normalized
     order = [primary_remote]
     if has_local:
@@ -74,6 +76,16 @@ def _timeout_s(cli_value: int | None) -> int:
         return int(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
     except ValueError:
         return 120
+
+
+def _codex_timeout_s(cli_value: int | None) -> int:
+    """A coding agent needs more time than a single text response by default."""
+    if cli_value and cli_value > 0:
+        return cli_value
+    try:
+        return int(os.environ.get("LLM_TIMEOUT_SECONDS", "600"))
+    except ValueError:
+        return 600
 
 
 def _classify_error(exc: Exception) -> str:
@@ -125,6 +137,39 @@ async def _run_openai_text(prompt: str, model: str, max_tokens: int = 4000) -> L
     return LLMResult(ok=True, provider="openai", text=text)
 
 
+async def _run_codex(prompt: str, cwd: Path, *, writable: bool) -> LLMResult:
+    """Use the existing Codex CLI login; keep its final answer separate from diagnostics."""
+    with tempfile.TemporaryDirectory(prefix="wiki-codex-") as temp_dir:
+        answer_path = Path(temp_dir) / "answer.txt"
+        command = [
+            "codex", "exec", "--ephemeral", "--sandbox",
+            "workspace-write" if writable else "read-only",
+            "--output-last-message", str(answer_path), "-",
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(cwd),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await process.communicate(prompt.encode("utf-8"))
+        except asyncio.CancelledError:
+            process.kill()
+            await process.communicate()
+            raise
+        if process.returncode != 0:
+            diagnostic = stderr.decode("utf-8", errors="replace")[-1000:]
+            raise RuntimeError(f"codex exec exited {process.returncode}: {diagnostic}")
+        if not answer_path.exists():
+            raise RuntimeError("codex exec produced no final answer")
+        answer = answer_path.read_text(encoding="utf-8").strip()
+        if not answer:
+            raise RuntimeError("codex exec produced an empty final answer")
+        return LLMResult(ok=True, provider="codex", text=answer)
+
+
 def _apply_file_operations(operations: list[dict[str, Any]], root_dir: Path) -> None:
     for op in operations:
         kind = op.get("op")
@@ -174,6 +219,11 @@ async def run_text_with_fallback(
                 return await asyncio.wait_for(
                     _run_openai_text(prompt=prompt, model=openai_model_value),
                     timeout=timeout_seconds,
+                )
+            if provider == "codex":
+                return await asyncio.wait_for(
+                    _run_codex(prompt=prompt, cwd=cwd, writable=False),
+                    timeout=_codex_timeout_s(timeout_s),
                 )
         except Exception as exc:
             last_error = LLMResult(
@@ -265,6 +315,11 @@ Return ONLY valid JSON (no markdown fences), schema:
                     raise ValueError("openai response has invalid operations")
                 _apply_file_operations(operations, root_dir=root_dir)
                 return LLMResult(ok=True, provider="openai", text="operations_applied")
+            if provider == "codex":
+                return await asyncio.wait_for(
+                    _run_codex(prompt=prompt, cwd=cwd, writable=True),
+                    timeout=_codex_timeout_s(timeout_s),
+                )
         except Exception as exc:
             last_error = LLMResult(
                 ok=False,

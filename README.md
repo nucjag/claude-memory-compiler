@@ -75,11 +75,13 @@ claude,local
 
 - `claude`: default primary provider
 - `openai`: optional alternative primary provider (default model `gpt-5.4`)
+- `codex`: use the signed-in Codex CLI (`codex exec`); no OpenAI API key is needed when Codex is signed in with ChatGPT
 - `local`: no remote call; `lint` degrades to structural checks, `compile` fails fast with clear error
 
 Important: remote providers are independent. The runtime uses only one remote provider per run:
 - `claude,local` or
 - `openai,local`
+- `codex,local`
 
 ENV defaults:
 
@@ -95,6 +97,7 @@ CLI overrides:
 uv run python scripts/compile.py --provider-order claude,local --timeout 120
 uv run python scripts/lint.py --provider-order claude,local --timeout 120
 uv run python scripts/compile.py --provider-order openai,local --openai-model gpt-5.4 --timeout 120
+uv run python scripts/compile.py --provider-order codex,local
 ```
 
 ## Why No RAG?
