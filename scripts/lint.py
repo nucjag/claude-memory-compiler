@@ -17,6 +17,8 @@ os.environ.setdefault("CLAUDE_INVOKED_BY", "memory_compiler")
 
 import argparse
 import asyncio
+import sys
+import traceback
 
 from config import KNOWLEDGE_DIR, PROJECT_DIR, REPORTS_DIR, now_iso, today_iso
 from llm_client import run_text_with_fallback
@@ -29,6 +31,7 @@ from utils import (
     list_all_knowledge_articles,
     list_raw_files,
     list_wiki_articles,
+    load_compiled_daily,
     load_state,
     read_all_wiki_content,
     save_state,
@@ -98,11 +101,10 @@ def check_orphan_pages() -> list[dict]:
 
 def check_orphan_sources() -> list[dict]:
     """Check for daily logs that haven't been compiled yet."""
-    state = load_state()
-    ingested = state.get("ingested", {})
+    compiled = load_compiled_daily()
     issues = []
     for log_path in list_raw_files():
-        if log_path.name not in ingested:
+        if log_path.name not in compiled:
             issues.append({
                 "severity": "warning",
                 "check": "orphan_source",
@@ -114,13 +116,12 @@ def check_orphan_sources() -> list[dict]:
 
 def check_stale_articles() -> list[dict]:
     """Check if source daily logs have changed since compilation."""
-    state = load_state()
-    ingested = state.get("ingested", {})
+    compiled = load_compiled_daily()
     issues = []
     for log_path in list_raw_files():
         rel = log_path.name
-        if rel in ingested:
-            stored_hash = ingested[rel].get("hash", "")
+        if rel in compiled:
+            stored_hash = compiled[rel]
             current_hash = file_hash(log_path)
             if stored_hash != current_hash:
                 issues.append({
@@ -359,4 +360,9 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    try:
+        exit(main())
+    except Exception as exc:
+        print(f"Lint technical failure: {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        exit(2)

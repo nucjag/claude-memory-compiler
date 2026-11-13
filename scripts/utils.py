@@ -10,6 +10,7 @@ from pathlib import Path
 from config import (
     CONCEPTS_DIR,
     CONNECTIONS_DIR,
+    COMPILED_DAILY_FILE,
     DAILY_DIR,
     INDEX_FILE,
     KNOWLEDGE_DIR,
@@ -32,6 +33,35 @@ def save_state(state: dict) -> None:
     """Save state to state.json."""
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def load_compiled_daily() -> dict[str, str]:
+    """Load the portable record of daily files successfully compiled."""
+    if COMPILED_DAILY_FILE.exists():
+        payload = json.loads(COMPILED_DAILY_FILE.read_text(encoding="utf-8"))
+        if payload.get("version") != 1 or not isinstance(payload.get("files"), dict):
+            raise ValueError(f"Invalid compiled-daily manifest: {COMPILED_DAILY_FILE}")
+        return {str(name): str(digest) for name, digest in payload["files"].items()}
+
+    # One-time migration for existing checkouts. The runtime state is local and
+    # ignored, so copy only confirmed hashes into the tracked manifest.
+    ingested = load_state().get("ingested", {})
+    return {
+        str(name): str(entry["hash"])
+        for name, entry in ingested.items()
+        if isinstance(entry, dict) and entry.get("hash")
+    }
+
+
+def save_compiled_daily(files: dict[str, str]) -> None:
+    """Atomically persist hashes of daily files successfully compiled."""
+    COMPILED_DAILY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = COMPILED_DAILY_FILE.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps({"version": 1, "files": dict(sorted(files.items()))}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(COMPILED_DAILY_FILE)
 
 
 # ── File hashing ──────────────────────────────────────────────────────

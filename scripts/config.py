@@ -29,6 +29,7 @@ AGENTS_FILE = COMPILER_DIR / "AGENTS.md"
 
 INDEX_FILE = KNOWLEDGE_DIR / "index.md"
 LOG_FILE = KNOWLEDGE_DIR / "log.md"
+COMPILED_DAILY_FILE = KNOWLEDGE_DIR / "compiled-daily.json"
 STATE_DIR = ROOT_DIR / ".runtime"
 STATE_FILE = STATE_DIR / "state.json"
 

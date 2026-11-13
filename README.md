@@ -49,6 +49,8 @@ Conversation -> SessionEnd/PreCompact hooks -> flush.py extracts knowledge
 - **compile.py** turns daily logs into organized concept articles with cross-references (triggered automatically or run manually)
 - **query.py** answers questions using index-guided retrieval (no RAG needed at personal scale)
 - **lint.py** runs 7 health checks (broken links, orphans, contradictions, staleness)
+- `lint.py` exit codes: `0` no errors (warnings are non-blocking), `1` wiki lint errors, `2` technical execution failure.
+- Successful daily compilations are recorded by content hash in the tracked `.wiki/knowledge/compiled-daily.json` manifest; `wiki-memory freshness` checks that every current daily file matches it.
 
 ## Key Commands
 

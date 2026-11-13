@@ -19,6 +19,7 @@ os.environ.setdefault("CLAUDE_INVOKED_BY", "memory_compiler")
 
 import argparse
 import asyncio
+import hashlib
 import sys
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from llm_client import run_compile_with_fallback
 from utils import (
     enforce_backlinks,
     file_hash,
+    load_compiled_daily,
     list_raw_files,
     list_wiki_articles,
     load_state,
@@ -36,6 +38,7 @@ from utils import (
     read_log_text,
     read_wiki_index,
     save_state,
+    save_compiled_daily,
     select_related_articles,
     snapshot_knowledge,
     verify_compile,
@@ -51,12 +54,13 @@ async def compile_daily_log(
     provider_order: str | None,
     timeout_s: int | None,
     openai_model: str | None,
-) -> tuple[float, bool]:
+) -> tuple[float, bool, str | None]:
     """Compile a single daily log into knowledge articles.
 
-    Returns the API cost of the compilation.
+    Returns API cost, success status, and the hash of the exact daily content compiled.
     """
     log_content = log_path.read_text(encoding="utf-8")
+    source_hash = hashlib.sha256(log_content.encode("utf-8")).hexdigest()[:16]
     schema = AGENTS_FILE.read_text(encoding="utf-8")
     wiki_index = read_wiki_index()
 
@@ -175,7 +179,7 @@ Read the daily log above and compile it into wiki articles following the schema 
     )
     if not result.ok:
         print(f"  Error ({result.error_type}): {result.error}")
-        return 0.0, False
+        return 0.0, False, None
     print(f"  Provider: {result.provider}")
     if result.cost_usd > 0:
         print(f"  Cost: ${result.cost_usd:.4f}")
@@ -183,7 +187,7 @@ Read the daily log above and compile it into wiki articles following the schema 
     verified, reason = verify_compile(before, before_log, log_path.name)
     if not verified:
         print(f"  Error (COMPILE_INCOMPLETE): {reason}; session {result.subtype or 'unknown'}, {result.num_turns} turns")
-        return result.cost_usd, False
+        return result.cost_usd, False, None
     print(f"  Verified: {reason}")
 
     ungrounded = find_ungrounded_identifiers(changed_articles(before), build_grounding_corpus(log_content))
@@ -193,7 +197,7 @@ Read the daily log above and compile it into wiki articles following the schema 
     # Update state
     rel_path = log_path.name
     state.setdefault("ingested", {})[rel_path] = {
-        "hash": file_hash(log_path),
+        "hash": source_hash,
         "compiled_at": now_iso(),
         "cost_usd": result.cost_usd,
         "provider": result.provider,
@@ -201,7 +205,7 @@ Read the daily log above and compile it into wiki articles following the schema 
     state["total_cost"] = state.get("total_cost", 0.0) + result.cost_usd
     save_state(state)
 
-    return result.cost_usd, True
+    return result.cost_usd, True, source_hash
 
 
 def main():
@@ -215,6 +219,11 @@ def main():
     args = parser.parse_args()
 
     state = load_state()
+    compiled_daily = load_compiled_daily()
+    if not args.dry_run:
+        # Persist one-time migration from the local runtime state before work;
+        # each subsequently successful file updates this manifest independently.
+        save_compiled_daily(compiled_daily)
 
     # Determine which files to compile
     if args.file:
@@ -236,8 +245,7 @@ def main():
             to_compile = []
             for log_path in all_logs:
                 rel = log_path.name
-                prev = state.get("ingested", {}).get(rel, {})
-                if not prev or prev.get("hash") != file_hash(log_path):
+                if compiled_daily.get(rel) != file_hash(log_path):
                     to_compile.append(log_path)
 
     if not to_compile:
@@ -257,7 +265,7 @@ def main():
     succeeded = 0
     for i, log_path in enumerate(to_compile, 1):
         print(f"\n[{i}/{len(to_compile)}] Compiling {log_path.name}...")
-        cost, ok = asyncio.run(
+        cost, ok, compiled_hash = asyncio.run(
             compile_daily_log(
                 log_path,
                 state,
@@ -271,6 +279,8 @@ def main():
             failed_files.append(log_path.name)
             print("  Failed.")
         else:
+            compiled_daily[log_path.name] = compiled_hash
+            save_compiled_daily(compiled_daily)
             succeeded += 1
             print("  Done.")
 
