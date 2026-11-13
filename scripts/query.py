@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import re
 import sys
 
 from config import CLAUDE_MODEL, KNOWLEDGE_DIR, PROJECT_DIR, QA_DIR, now_iso
+from llm_client import _provider_order, _run_codex
 from utils import (
     enforce_backlinks,
     extract_wikilinks,
@@ -29,6 +31,13 @@ from utils import (
 )
 
 ROOT_DIR = PROJECT_DIR
+
+
+def _codex_timeout() -> int:
+    try:
+        return max(1, int(os.environ.get("LLM_TIMEOUT_SECONDS", "120")))
+    except ValueError:
+        return 120
 
 
 def _article_context(links: list[str]) -> str:
@@ -72,8 +81,6 @@ def _append_query_marker(selected_count: int, total_count: int) -> None:
 
 async def _select_relevant_links(question: str, index_content: str) -> list[str]:
     """Pass 1: select relevant article links from the index."""
-    from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
-
     prompt = f"""You are selecting wiki articles for a question.
 
 Return only relevant wikilinks from the index, one per line, max 10 lines.
@@ -92,20 +99,23 @@ If nothing is relevant, output exactly: NONE
 {question}
 """
 
-    response = ""
-    async for message in query(
-        prompt=prompt,
-        options=ClaudeAgentOptions(
-            cwd=str(ROOT_DIR),
-            model=CLAUDE_MODEL,
-            allowed_tools=[],
-            max_turns=2,
-        ),
-    ):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    response += block.text
+    if _provider_order(None)[0] == "codex":
+        response = (await asyncio.wait_for(
+            _run_codex(prompt, ROOT_DIR, writable=False), timeout=_codex_timeout(),
+        )).text
+    else:
+        from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
+        response = ""
+        async for message in query(
+            prompt=prompt,
+            options=ClaudeAgentOptions(
+                cwd=str(ROOT_DIR), model=CLAUDE_MODEL, allowed_tools=[], max_turns=2,
+            ),
+        ):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        response += block.text
 
     links = []
     seen = set()
@@ -185,7 +195,12 @@ the selected wiki articles below.
     cost = 0.0
 
     try:
-        async for message in query(
+        if _provider_order(None)[0] == "codex":
+            answer = (await asyncio.wait_for(
+                _run_codex(prompt, ROOT_DIR, writable=file_back), timeout=_codex_timeout(),
+            )).text
+        else:
+            async for message in query(
             prompt=prompt,
             options=ClaudeAgentOptions(
                 cwd=str(ROOT_DIR),
@@ -195,13 +210,13 @@ the selected wiki articles below.
                 permission_mode="acceptEdits",
                 max_turns=15,
             ),
-        ):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        answer += block.text
-            elif isinstance(message, ResultMessage):
-                cost = message.total_cost_usd or 0.0
+            ):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            answer += block.text
+                elif isinstance(message, ResultMessage):
+                    cost = message.total_cost_usd or 0.0
     except Exception as e:
         answer = f"Error querying knowledge base: {e}"
 

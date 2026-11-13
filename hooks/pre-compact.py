@@ -24,7 +24,7 @@ from pathlib import Path
 if os.environ.get("CLAUDE_INVOKED_BY"):
     sys.exit(0)
 
-PROJECT_DIR = Path(__file__).resolve().parents[4]
+PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_ROOT", Path(__file__).resolve().parents[4])).resolve()
 DEFAULT_ROOT = PROJECT_DIR / ".wiki"
 root_env = os.environ.get("CLAUDE_WIKI_ROOT", "")
 if root_env:
@@ -35,7 +35,8 @@ if root_env:
 else:
     ROOT = DEFAULT_ROOT.resolve()
 COMPILER_DIR = Path(__file__).resolve().parent.parent
-STATE_DIR = COMPILER_DIR / "scripts"
+STATE_DIR = ROOT / ".runtime"
+STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     filename=str(STATE_DIR / "flush.log"),
@@ -194,6 +195,8 @@ def main() -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=creation_flags,
+            env={**os.environ, "CLAUDE_PROJECT_ROOT": str(PROJECT_DIR), "CLAUDE_WIKI_ROOT": str(ROOT)},
+            cwd=str(PROJECT_DIR),
         )
         logging.info("Spawned flush.py for session %s (%d turns, %d chars)", session_id, turn_count, len(context))
     except Exception as e:

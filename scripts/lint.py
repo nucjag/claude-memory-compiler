@@ -283,7 +283,7 @@ def main():
         action="store_true",
         help="Auto-fix missing backlinks before running checks",
     )
-    parser.add_argument("--provider-order", type=str, help="LLM providers order, e.g. claude,openai,local")
+    parser.add_argument("--provider-order", type=str, help="LLM providers order, e.g. codex,local")
     parser.add_argument("--openai-model", type=str, help="OpenAI model for fallback, default gpt-5.4")
     parser.add_argument("--timeout", type=int, help="Per-provider timeout in seconds")
     args = parser.parse_args()

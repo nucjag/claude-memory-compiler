@@ -6,7 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # ── Paths ──────────────────────────────────────────────────────────────
-PROJECT_DIR = Path(__file__).resolve().parents[4]
+PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_ROOT", Path(__file__).resolve().parents[4])).resolve()
 DEFAULT_ROOT = PROJECT_DIR / ".wiki"
 root_env = os.environ.get("CLAUDE_WIKI_ROOT", "")
 if root_env:
@@ -29,7 +29,8 @@ AGENTS_FILE = COMPILER_DIR / "AGENTS.md"
 
 INDEX_FILE = KNOWLEDGE_DIR / "index.md"
 LOG_FILE = KNOWLEDGE_DIR / "log.md"
-STATE_FILE = SCRIPTS_DIR / "state.json"
+STATE_DIR = ROOT_DIR / ".runtime"
+STATE_FILE = STATE_DIR / "state.json"
 
 # ── Timezone ───────────────────────────────────────────────────────────
 TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")

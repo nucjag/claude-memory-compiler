@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-PROJECT_DIR = Path(__file__).resolve().parents[4]
+PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_ROOT", Path(__file__).resolve().parents[4])).resolve()
 DEFAULT_ROOT = PROJECT_DIR / ".wiki"
 root_env = os.environ.get("CLAUDE_WIKI_ROOT", "")
 if root_env:
@@ -36,11 +36,12 @@ else:
     ROOT = DEFAULT_ROOT.resolve()
 COMPILER_DIR = Path(__file__).resolve().parent.parent
 TIMEZONE = os.environ.get("CLAUDE_WIKI_TIMEZONE", "Europe/Moscow")
-CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-5-5")
 DAILY_DIR = ROOT / "daily"
 SCRIPTS_DIR = COMPILER_DIR / "scripts"
-STATE_FILE = SCRIPTS_DIR / "last-flush.json"
-LOG_FILE = SCRIPTS_DIR / "flush.log"
+STATE_DIR = ROOT / ".runtime"
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+STATE_FILE = STATE_DIR / "last-flush.json"
+LOG_FILE = STATE_DIR / "flush.log"
 
 # Set up file-based logging so we can verify the background process ran.
 # The parent process sends stdout/stderr to DEVNULL (to avoid the inherited
@@ -86,14 +87,7 @@ def append_to_daily_log(content: str, section: str = "Session") -> None:
 
 
 async def run_flush(context: str) -> str:
-    """Use Claude Agent SDK to extract important knowledge from conversation context."""
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ClaudeAgentOptions,
-        ResultMessage,
-        TextBlock,
-        query,
-    )
+    """Extract important knowledge using the selected LLM provider."""
 
     prompt = f"""Review the conversation context below and respond with a concise summary
 of important items that should be preserved in the daily log.
@@ -130,35 +124,23 @@ respond with exactly: FLUSH_OK
 
 {context}"""
 
-    from llm_client import isolated_session_options
-
-    response = ""
-    stderr_lines: list[str] = []
-
+    from llm_client import run_text_with_fallback
     try:
-        async for message in query(
+        result = await run_text_with_fallback(
             prompt=prompt,
-            options=ClaudeAgentOptions(
-                cwd=str(ROOT),
-                model=CLAUDE_MODEL,
-                allowed_tools=[],
-                max_turns=2,
-                **isolated_session_options(stderr_lines),
-            ),
-        ):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        response += block.text
-            elif isinstance(message, ResultMessage):
-                pass
+            cwd=PROJECT_DIR,
+            provider_order=None,
+            timeout_s=None,
+            openai_model=None,
+            max_turns=2,
+        )
+        if result.ok:
+            return result.text
+        return f"FLUSH_ERROR: {result.error_type}: {result.error}"
     except Exception as e:
         import traceback
-        logging.error("Agent SDK error: %s\n%s", e, traceback.format_exc())
-        stderr_tail = " ".join(line.strip() for line in stderr_lines[-5:])[:500]
-        response = f"FLUSH_ERROR: {type(e).__name__}: {e}" + (f" | stderr: {stderr_tail}" if stderr_tail else "")
-
-    return response
+        logging.error("LLM error: %s\n%s", e, traceback.format_exc())
+        return f"FLUSH_ERROR: {type(e).__name__}: {e}"
 
 
 COMPILE_AFTER_HOUR = 18  # 6 PM local time
@@ -180,7 +162,7 @@ def maybe_trigger_compilation() -> None:
 
     # Check if today's log has already been compiled
     today_log = f"{now.strftime('%Y-%m-%d')}.md"
-    compile_state_file = SCRIPTS_DIR / "state.json"
+    compile_state_file = STATE_DIR / "state.json"
     if compile_state_file.exists():
         try:
             compile_state = json.loads(compile_state_file.read_text(encoding="utf-8"))
@@ -211,7 +193,7 @@ def maybe_trigger_compilation() -> None:
         kwargs["start_new_session"] = True
 
     try:
-        log_handle = open(str(SCRIPTS_DIR / "compile.log"), "a")
+        log_handle = open(str(STATE_DIR / "compile.log"), "a")
         _sp.Popen(cmd, stdout=log_handle, stderr=_sp.STDOUT, cwd=str(PROJECT_DIR), **kwargs)
     except Exception as e:
         logging.error("Failed to spawn compile.py: %s", e)
@@ -254,14 +236,16 @@ def main():
     response = asyncio.run(run_flush(context))
 
     # Append to daily log
-    if "FLUSH_OK" in response:
+    if response.strip() == "FLUSH_OK":
         logging.info("Result: FLUSH_OK")
         append_to_daily_log(
             "FLUSH_OK - Nothing worth saving from this session", "Memory Flush"
         )
-    elif "FLUSH_ERROR" in response:
+    elif response.startswith("FLUSH_ERROR"):
         logging.error("Result: %s", response)
         append_to_daily_log(response, "Memory Flush")
+        # Preserve the source so a failed provider call can be retried.
+        return
     else:
         logging.info("Result: saved to daily log (%d chars)", len(response))
         append_to_daily_log(response, "Session")

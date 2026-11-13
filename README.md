@@ -67,26 +67,24 @@ uv run python scripts/compile.py --timeout 120       # fail fast per provider
 `compile.py` and LLM-based parts of `lint.py` now support provider fallback to avoid hanging
 when Claude quota/tokens are unavailable.
 
-Default chain:
+Default chain in this fork:
 
 ```text
-claude,local
+codex,local
 ```
 
-- `claude`: default primary provider
+- `claude`: alternative provider for Claude Code credentials
 - `openai`: optional alternative primary provider (default model `gpt-5.4`)
-- `codex`: use the signed-in Codex CLI (`codex exec`); no OpenAI API key is needed when Codex is signed in with ChatGPT
+- `codex`: signed-in Codex CLI provider; uses ChatGPT plan limits, no API key required
 - `local`: no remote call; `lint` degrades to structural checks, `compile` fails fast with clear error
 
-Important: remote providers are independent. The runtime uses only one remote provider per run:
-- `claude,local` or
-- `openai,local`
-- `codex,local`
+Providers are tried in the specified order, then `local` reports failure if none succeeds.
+Set `LLM_PROVIDER_ORDER=codex,local` to skip an exhausted Claude account.
 
 ENV defaults:
 
 ```bash
-export LLM_PROVIDER_ORDER=claude,local
+export LLM_PROVIDER_ORDER=codex,local
 export LLM_OPENAI_MODEL=gpt-5.4
 export LLM_TIMEOUT_SECONDS=120
 ```
@@ -97,8 +95,25 @@ CLI overrides:
 uv run python scripts/compile.py --provider-order claude,local --timeout 120
 uv run python scripts/lint.py --provider-order claude,local --timeout 120
 uv run python scripts/compile.py --provider-order openai,local --openai-model gpt-5.4 --timeout 120
-uv run python scripts/compile.py --provider-order codex,local
+uv run python scripts/compile.py --provider-order codex,local --timeout 300
 ```
+
+`flush.py` and `query.py` also honor `LLM_PROVIDER_ORDER=codex,local`. Codex CLI must be
+installed and signed in (`codex login status`). The Codex service invocation uses an
+ephemeral session without user configuration or hooks. Compilation writes directly to the
+project wiki and is verified by `compile.py` before its state is updated. Query file-back
+uses workspace-write; ordinary queries and flush use read-only mode.
+
+The Codex model is read from the project's `.wiki/config.toml`:
+
+```toml
+[llm]
+codex_model = "gpt-5.6-sol"
+```
+
+`LLM_CODEX_MODEL` overrides this setting for one run. If neither is set, the default is
+`gpt-5.6-sol`. The adapter passes the selected model with `codex exec --model`, because
+`--ignore-user-config` excludes the user's Codex model setting.
 
 ## Why No RAG?
 

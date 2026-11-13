@@ -30,6 +30,7 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     """Save state to state.json."""
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 

@@ -88,7 +88,7 @@ and extract knowledge into structured wiki articles.
 
 ## All Existing Article Paths
 
-Full text of the other articles is NOT included. Open any of them before
+Full text of the other articles is NOT included. Open any of them with the Read tool before
 updating or linking it.
 
 {all_paths if all_paths else "(No existing articles yet)"}
@@ -118,7 +118,7 @@ Read the daily log above and compile it into wiki articles following the schema 
    - Read the existing article, add the new information, add the source to frontmatter
    - When the log changes a fact the article already states, rewrite that statement in place -
      never keep the old and the new version side by side
-   - Before finishing, search {KNOWLEDGE_DIR} for the key terms of this log (file names,
+   - Before finishing, run Grep over {KNOWLEDGE_DIR} for the key terms of this log (file names,
      identifiers, error codes, component names) and open every article that matches; update it if
      the log adds to it. Do not rely only on the articles included above
 5. **Update knowledge/index.md** - ONE row per article across the whole file
@@ -143,7 +143,6 @@ Read the daily log above and compile it into wiki articles following the schema 
 - Write connection articles to: {CONNECTIONS_DIR}
 - Update index at: {KNOWLEDGE_DIR / 'index.md'}
 - Append log at: {KNOWLEDGE_DIR / 'log.md'}
-- Modify only files under {KNOWLEDGE_DIR}; read other project files only to verify facts.
 
 ### Grounding rules (highest priority):
 - State only what the daily log supports. Never invent names, environment variables, commands,
@@ -210,7 +209,7 @@ def main():
     parser.add_argument("--all", action="store_true", help="Force recompile all logs")
     parser.add_argument("--file", type=str, help="Compile a specific daily log file")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be compiled")
-    parser.add_argument("--provider-order", type=str, help="LLM provider, e.g. codex,local or claude,local")
+    parser.add_argument("--provider-order", type=str, help="LLM providers order, e.g. codex,local")
     parser.add_argument("--openai-model", type=str, help="OpenAI model for fallback, default gpt-5.4")
     parser.add_argument("--timeout", type=int, help="Per-provider timeout in seconds")
     args = parser.parse_args()

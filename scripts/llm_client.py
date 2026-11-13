@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
+import shutil
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from config import CLAUDE_MODEL
+from config import CLAUDE_MODEL, ROOT_DIR
+
+DEFAULT_CODEX_MODEL = "gpt-5.6-sol"
 
 def isolated_session_options(stderr_lines: list[str]) -> dict[str, Any]:
     """Options that keep a service session from loading hooks/MCP or leaving a transcript.
@@ -47,26 +50,14 @@ class LLMResult:
 
 
 def _provider_order(cli_value: str | None) -> list[str]:
-    raw = cli_value or os.environ.get("LLM_PROVIDER_ORDER", "claude,local")
+    raw = cli_value or os.environ.get("LLM_PROVIDER_ORDER", "codex,local")
     allowed = {"claude", "openai", "codex", "local"}
     items = [x.strip().lower() for x in raw.split(",") if x.strip()]
     normalized = [x for x in items if x in allowed]
     if not normalized:
-        return ["claude", "local"]
+        return ["codex", "local"]
 
-    # Keep modes independent:
-    # - claude,local
-    # - openai,local
-    # - codex,local
-    # If both remotes are provided, keep only the first one.
-    primary_remote = next((x for x in normalized if x in {"claude", "openai", "codex"}), "claude")
-    has_local = "local" in normalized
-    order = [primary_remote]
-    if has_local:
-        order.append("local")
-    else:
-        order.append("local")
-    return order
+    return list(dict.fromkeys(x for x in normalized if x != "local")) + ["local"]
 
 
 def _timeout_s(cli_value: int | None) -> int:
@@ -79,7 +70,6 @@ def _timeout_s(cli_value: int | None) -> int:
 
 
 def _codex_timeout_s(cli_value: int | None) -> int:
-    """A coding agent needs more time than a single text response by default."""
     if cli_value and cli_value > 0:
         return cli_value
     try:
@@ -137,37 +127,49 @@ async def _run_openai_text(prompt: str, model: str, max_tokens: int = 4000) -> L
     return LLMResult(ok=True, provider="openai", text=text)
 
 
+def _codex_model() -> str:
+    """Resolve the wiki compiler model independently of Codex user settings."""
+    override = os.environ.get("LLM_CODEX_MODEL", "").strip()
+    if override:
+        return override
+    config_path = ROOT_DIR / "config.toml"
+    if config_path.exists():
+        with config_path.open("rb") as config_file:
+            config = tomllib.load(config_file)
+        model = config.get("llm", {}).get("codex_model", DEFAULT_CODEX_MODEL)
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError(f"llm.codex_model must be a non-empty string in {config_path}")
+        return model.strip()
+    return DEFAULT_CODEX_MODEL
+
+
 async def _run_codex(prompt: str, cwd: Path, *, writable: bool) -> LLMResult:
-    """Use the existing Codex CLI login; keep its final answer separate from diagnostics."""
-    with tempfile.TemporaryDirectory(prefix="wiki-codex-") as temp_dir:
-        answer_path = Path(temp_dir) / "answer.txt"
-        command = [
-            "codex", "exec", "--ephemeral", "--sandbox",
-            "workspace-write" if writable else "read-only",
-            "--output-last-message", str(answer_path), "-",
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(cwd),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            _, stderr = await process.communicate(prompt.encode("utf-8"))
-        except asyncio.CancelledError:
-            process.kill()
-            await process.communicate()
-            raise
-        if process.returncode != 0:
-            diagnostic = stderr.decode("utf-8", errors="replace")[-1000:]
-            raise RuntimeError(f"codex exec exited {process.returncode}: {diagnostic}")
-        if not answer_path.exists():
-            raise RuntimeError("codex exec produced no final answer")
-        answer = answer_path.read_text(encoding="utf-8").strip()
-        if not answer:
-            raise RuntimeError("codex exec produced an empty final answer")
-        return LLMResult(ok=True, provider="codex", text=answer)
+    """Use the signed-in Codex CLI; keep service runs free of project hooks."""
+    binary = shutil.which("codex")
+    if not binary:
+        raise RuntimeError("codex CLI is not installed")
+    command = [binary, "exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
+               "--model", _codex_model(),
+               "--sandbox", "workspace-write" if writable else "read-only",
+               "-C", str(cwd), "-"]
+    env = {**os.environ, "CLAUDE_INVOKED_BY": "memory_compiler"}
+    process = await asyncio.create_subprocess_exec(
+        *command, stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    try:
+        stdout, stderr = await process.communicate(prompt.encode("utf-8"))
+    except asyncio.CancelledError:
+        process.kill()
+        await process.communicate()
+        raise
+    if process.returncode:
+        raise RuntimeError(f"codex exec exited {process.returncode}: {stderr.decode('utf-8', 'replace')[-1000:]}")
+    result = stdout.decode("utf-8", "replace").strip()
+    if not result:
+        raise RuntimeError("codex exec returned an empty response")
+    return LLMResult(ok=True, provider="codex", text=result)
 
 
 def _apply_file_operations(operations: list[dict[str, Any]], root_dir: Path) -> None:
@@ -222,8 +224,7 @@ async def run_text_with_fallback(
                 )
             if provider == "codex":
                 return await asyncio.wait_for(
-                    _run_codex(prompt=prompt, cwd=cwd, writable=False),
-                    timeout=_codex_timeout_s(timeout_s),
+                    _run_codex(prompt, cwd, writable=False), timeout=_codex_timeout_s(timeout_s),
                 )
         except Exception as exc:
             last_error = LLMResult(
@@ -316,9 +317,11 @@ Return ONLY valid JSON (no markdown fences), schema:
                 _apply_file_operations(operations, root_dir=root_dir)
                 return LLMResult(ok=True, provider="openai", text="operations_applied")
             if provider == "codex":
+                codex_prompt = f"{prompt}\n\nWork only in {root_dir}. Complete all required file edits. " \
+                    "Do not run the compiler, flush hooks, or unrelated commands. " \
+                    "Do not claim completion unless the files were written."
                 return await asyncio.wait_for(
-                    _run_codex(prompt=prompt, cwd=cwd, writable=True),
-                    timeout=_codex_timeout_s(timeout_s),
+                    _run_codex(codex_prompt, root_dir, writable=True), timeout=_codex_timeout_s(timeout_s),
                 )
         except Exception as exc:
             last_error = LLMResult(

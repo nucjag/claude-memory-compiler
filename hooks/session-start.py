@@ -28,7 +28,7 @@ if os.environ.get("CLAUDE_INVOKED_BY"):
     sys.exit(0)
 
 # Paths relative to active wiki root
-PROJECT_DIR = Path(__file__).resolve().parents[4]
+PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_ROOT", Path(__file__).resolve().parents[4])).resolve()
 DEFAULT_ROOT = PROJECT_DIR / ".wiki"
 root_env = os.environ.get("CLAUDE_WIKI_ROOT", "")
 if root_env:
